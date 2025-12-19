@@ -1,0 +1,24 @@
+@PACKAGE_INIT@
+
+include("${CMAKE_CURRENT_LIST_DIR}/ODETargets.cmake")
+
+set(ODE_VERSION @PROJECT_VERSION@)
+set(ODE_PRECISION @ODE_PRECISION@)
+set(ODE_WITH_TRIMESH @ODE_WITH_TRIMESH@)
+set(ODE_WITH_OPCODE @ODE_WITH_OPCODE@)
+
+check_required_components(ODE)
+
+# Provide information about the library
+if(NOT TARGET ODE::ode)
+    message(FATAL_ERROR "ODE library target not found!")
+endif()
+
+# Print found message
+if(NOT ODE_FIND_QUIETLY)
+    message(STATUS "Found ODE: ${ODE_VERSION}")
+    message(STATUS "  Precision: ${ODE_PRECISION}")
+    if(ODE_WITH_TRIMESH)
+        message(STATUS "  Trimesh: Enabled (OPCODE)")
+    endif()
+endif()

@@ -1,18 +1,10 @@
 cmake_minimum_required(VERSION 3.10)
 project(ODE VERSION 0.8.0 LANGUAGES C CXX)
 
-# Enable multi-processor compilation globally (MSVC)
-if(MSVC)
-    add_compile_options(/MP)
-endif()
-
-# Options matching original build system
+# Options (can be set from parent CMakeLists.txt)
 option(ODE_DOUBLE_PRECISION "Use double precision math" OFF)
 option(ODE_WITH_TRIMESH "Enable trimesh support" ON)
-option(ODE_WITH_OPCODE "Use OPCODE for trimesh (requires ODE_WITH_TRIMESH)" ON)
-option(ODE_BUILD_SHARED "Build shared library" OFF)
-option(ODE_WITH_TESTS "Build test programs" OFF)
-option(ODE_WITH_DEMOS "Build demo programs" OFF)
+option(ODE_WITH_OPCODE "Use OPCODE for trimesh" ON)
 
 # Configuration
 set(ODE_PRECISION "dSINGLE")
@@ -20,27 +12,23 @@ if(ODE_DOUBLE_PRECISION)
     set(ODE_PRECISION "dDOUBLE")
 endif()
 
-# Create config.h from config-default.h
-if(EXISTS ${CMAKE_SOURCE_DIR}/build/config-default.h)
+# Create config.h
+if(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/build/config-default.h)
     configure_file(
-        ${CMAKE_SOURCE_DIR}/build/config-default.h
-        ${CMAKE_SOURCE_DIR}/include/ode/config.h
+        ${CMAKE_CURRENT_SOURCE_DIR}/build/config-default.h
+        ${CMAKE_CURRENT_SOURCE_DIR}/include/ode/config.h
         COPYONLY
     )
-    
-    # Modify precision in config.h
-    file(READ ${CMAKE_SOURCE_DIR}/include/ode/config.h CONFIG_CONTENT)
+    file(READ ${CMAKE_CURRENT_SOURCE_DIR}/include/ode/config.h CONFIG_CONTENT)
     if(ODE_DOUBLE_PRECISION)
         string(REGEX REPLACE "#define dSINGLE 1" "#define dDOUBLE 1" CONFIG_CONTENT "${CONFIG_CONTENT}")
     else()
         string(REGEX REPLACE "#define dDOUBLE 1" "#define dSINGLE 1" CONFIG_CONTENT "${CONFIG_CONTENT}")
     endif()
-    file(WRITE ${CMAKE_SOURCE_DIR}/include/ode/config.h "${CONFIG_CONTENT}")
-else()
-    message(WARNING "build/config-default.h not found, using existing config.h")
+    file(WRITE ${CMAKE_CURRENT_SOURCE_DIR}/include/ode/config.h "${CONFIG_CONTENT}")
 endif()
 
-# Source files - ODE Core
+# ODE Core sources (verified for ODE 0.8)
 set(ODE_CORE_SOURCES
     ode/src/array.cpp
     ode/src/box.cpp
@@ -56,12 +44,10 @@ set(ODE_CORE_SOURCES
     ode/src/convex.cpp
     ode/src/cylinder.cpp
     ode/src/error.cpp
-    ode/src/export-dif.cpp
     ode/src/fastdot.c
     ode/src/fastldlt.c
     ode/src/fastlsolve.c
     ode/src/fastltsolve.c
-    ode/src/heightfield.cpp
     ode/src/joint.cpp
     ode/src/lcp.cpp
     ode/src/mass.cpp
@@ -71,7 +57,6 @@ set(ODE_CORE_SOURCES
     ode/src/misc.cpp
     ode/src/obstack.cpp
     ode/src/ode.cpp
-    ode/src/odeinit.cpp
     ode/src/odemath.cpp
     ode/src/plane.cpp
     ode/src/quickstep.cpp
@@ -99,7 +84,7 @@ set(ODE_JOINT_SOURCES
     ode/src/joints/universal.cpp
 )
 
-# OPCODE sources (if trimesh enabled)
+# Trimesh sources (OPCODE)
 set(ODE_TRIMESH_SOURCES)
 set(OPCODE_SOURCES)
 set(ICE_SOURCES)
@@ -156,8 +141,8 @@ if(ODE_WITH_TRIMESH AND ODE_WITH_OPCODE)
     )
 endif()
 
-# Combine all sources
-set(ODE_ALL_SOURCES
+# Create static library
+add_library(ode STATIC
     ${ODE_CORE_SOURCES}
     ${ODE_JOINT_SOURCES}
     ${ODE_TRIMESH_SOURCES}
@@ -165,145 +150,68 @@ set(ODE_ALL_SOURCES
     ${ICE_SOURCES}
 )
 
-# Create library
-if(ODE_BUILD_SHARED)
-    add_library(ode SHARED ${ODE_ALL_SOURCES})
-    target_compile_definitions(ode PRIVATE ODE_DLL)
-    target_compile_definitions(ode PUBLIC ODE_DLL_EXPORTS)
-else()
-    add_library(ode STATIC ${ODE_ALL_SOURCES})
-    target_compile_definitions(ode PUBLIC ODE_LIB)
-endif()
-
 # Include directories
 target_include_directories(ode
     PUBLIC
-        $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>
-        $<INSTALL_INTERFACE:include>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     PRIVATE
-        ${CMAKE_SOURCE_DIR}/ode/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/ode/src
 )
 
 if(ODE_WITH_TRIMESH AND ODE_WITH_OPCODE)
     target_include_directories(ode PRIVATE
-        ${CMAKE_SOURCE_DIR}/OPCODE
-        ${CMAKE_SOURCE_DIR}/OPCODE/Ice
+        ${CMAKE_CURRENT_SOURCE_DIR}/OPCODE
+        ${CMAKE_CURRENT_SOURCE_DIR}/OPCODE/Ice
     )
-    target_compile_definitions(ode PUBLIC dTRIMESH_ENABLED dTRIMESH_OPCODE)
+    target_compile_definitions(ode PUBLIC 
+        dTRIMESH_ENABLED 
+        dTRIMESH_OPCODE
+    )
 endif()
 
 # Compiler definitions
 target_compile_definitions(ode PUBLIC ${ODE_PRECISION})
+target_compile_definitions(ode PUBLIC ODE_LIB)
 
 # Platform-specific settings
 if(WIN32)
-    target_compile_definitions(ode PRIVATE WIN32 _WINDOWS _CRT_SECURE_NO_WARNINGS)
+    target_compile_definitions(ode PRIVATE 
+        WIN32 
+        _WINDOWS 
+        _CRT_SECURE_NO_WARNINGS
+    )
     if(MSVC)
-        target_compile_options(ode PRIVATE /W3)
-        # Disable specific warnings for ODE 0.8
-        target_compile_options(ode PRIVATE /wd4244 /wd4305 /wd4996)
-        # Enable exception handling
-        target_compile_options(ode PRIVATE /EHsc)
+        target_compile_options(ode PRIVATE 
+            /MP                 # Multi-processor compilation
+            /W3                 # Warning level 3
+            /wd4244             # Disable conversion warnings
+            /wd4305             # Disable truncation warnings
+            /wd4996             # Disable deprecated warnings
+            /EHsc               # Exception handling
+        )
     endif()
 elseif(UNIX)
-    target_compile_options(ode PRIVATE -Wall -Wno-unused-variable)
+    target_compile_options(ode PRIVATE 
+        -Wall 
+        -Wno-unused-variable
+    )
     if(NOT APPLE)
         target_link_libraries(ode PUBLIC m pthread)
     endif()
-    # Enable position independent code for static libraries
     set_target_properties(ode PROPERTIES POSITION_INDEPENDENT_CODE ON)
 endif()
 
-# C++ standard for ODE 0.8 compatibility
+# C/C++ standards
 set_target_properties(ode PROPERTIES
     CXX_STANDARD 98
     CXX_STANDARD_REQUIRED ON
     C_STANDARD 99
 )
 
-# Output directories
-set_target_properties(ode PROPERTIES
-    ARCHIVE_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib
-    LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib
-    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
-)
-
-# Installation
-include(GNUInstallDirs)
-
-install(TARGETS ode
-    EXPORT ode-targets
-    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-)
-
-install(DIRECTORY include/ode
-    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
-    FILES_MATCHING PATTERN "*.h"
-)
-
-# Export configuration
-install(EXPORT ode-targets
-    FILE ODETargets.cmake
-    NAMESPACE ODE::
-    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/ODE
-)
-
-# Create config file
-include(CMakePackageConfigHelpers)
-write_basic_package_version_file(
-    "${CMAKE_CURRENT_BINARY_DIR}/ODEConfigVersion.cmake"
-    VERSION ${PROJECT_VERSION}
-    COMPATIBILITY SameMajorVersion
-)
-
-configure_package_config_file(
-    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/ODEConfig.cmake.in"
-    "${CMAKE_CURRENT_BINARY_DIR}/ODEConfig.cmake"
-    INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/ODE
-)
-
-install(FILES
-    "${CMAKE_CURRENT_BINARY_DIR}/ODEConfig.cmake"
-    "${CMAKE_CURRENT_BINARY_DIR}/ODEConfigVersion.cmake"
-    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/ODE
-)
-
-# Tests (optional)
-if(ODE_WITH_TESTS)
-    enable_testing()
-    if(EXISTS ${CMAKE_SOURCE_DIR}/ode/test)
-        add_subdirectory(ode/test)
-    else()
-        message(WARNING "Test directory not found, skipping tests")
-    endif()
-endif()
-
-# Demos (optional)
-if(ODE_WITH_DEMOS)
-    if(EXISTS ${CMAKE_SOURCE_DIR}/ode/demo)
-        add_subdirectory(ode/demo)
-    else()
-        message(WARNING "Demo directory not found, skipping demos")
-    endif()
-endif()
-
-# Print configuration summary
-message(STATUS "==========================================")
-message(STATUS "ODE 0.8 Configuration Summary")
-message(STATUS "==========================================")
-message(STATUS "  Version:        ${PROJECT_VERSION}")
+# Print configuration
+message(STATUS "ODE 0.8 Configuration:")
 message(STATUS "  Precision:      ${ODE_PRECISION}")
 message(STATUS "  Trimesh:        ${ODE_WITH_TRIMESH}")
 if(ODE_WITH_TRIMESH)
 message(STATUS "  OPCODE:         ${ODE_WITH_OPCODE}")
 endif()
-message(STATUS "  Build type:     ${CMAKE_BUILD_TYPE}")
-message(STATUS "  Shared library: ${ODE_BUILD_SHARED}")
-message(STATUS "  Build tests:    ${ODE_WITH_TESTS}")
-message(STATUS "  Build demos:    ${ODE_WITH_DEMOS}")
-if(MSVC)
-message(STATUS "  Multi-proc:     Enabled (/MP)")
-endif()
-message(STATUS "==========================================")

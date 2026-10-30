@@ -1,37 +1,48 @@
-LIBTOOL_DEPS = @LIBTOOL_DEPS@
-libtool: $(LIBTOOL_DEPS)
-	$(SHELL) ./config.status --recheck
+AUTOMAKE_OPTIONS = foreign
+ACLOCAL_AMFLAGS = -I m4 --install
 
-if ENABLE_TESTS
-SUBDIRS = include drawstuff ode
-else
-SUBDIRS = include ode
+if ENABLE_OU
+OU_DIR = ou
 endif
+
+if LIBCCD
+if LIBCCD_INTERNAL
+LIBCCD_DIR = libccd
+endif
+endif
+
+if ENABLE_DEMOS
+DRAWSTUFF_DIR = drawstuff
+endif
+
+if GIMPACT
+GIMPACT_DIR = GIMPACT
+endif
+
+if OPCODE
+OPCODE_DIR = OPCODE
+endif
+
+SUBDIRS = include \
+          $(DRAWSTUFF_DIR) \
+          $(GIMPACT_DIR) \
+          $(OPCODE_DIR) \
+          $(OU_DIR) \
+          $(LIBCCD_DIR) \
+          ode \
+          tests
 
 bin_SCRIPTS = ode-config
 
 # Utility rule for making a release
-release: dist dist-bz2 dist-zip
+release: dist-gzip dist-bzip2
 	@echo Created release packages for ${PACKAGE}-${VERSION}.
 
-# Rules for creating .tar.bz2 and .zip packages
-dist-bz2: ${PACKAGE}-${VERSION}.tar.gz
-	gzip -dc ${PACKAGE}-${VERSION}.tar.gz | bzip2 > ${PACKAGE}-${VERSION}.tar.bz2
+EXTRA_DIST = bootstrap build tools \
+        CHANGELOG.txt COPYING INSTALL.txt CSR.txt README.md \
+        LICENSE.TXT LICENSE-BSD.TXT \
+        bindings \
+        CMakeLists.txt ode-config.cmake.in config.h.cmake.in cmake
 
-dist-zip: ${PACKAGE}-${VERSION}.tar.gz
-	tar -zxf ${PACKAGE}-${VERSION}.tar.gz && \
-	zip -r ${PACKAGE}-${VERSION}.zip ${PACKAGE}-${VERSION} && \
-	rm -rf ${PACKAGE}-${VERSION}
-
-if USE_SONAME
-install-exec-hook:
-	ln -s $(libdir)/@ODE_SONAME@.@ODE_REVISION@.@ODE_AGE@ \
-	$(libdir)/libode.so
-	ln -s $(libdir)/@ODE_SONAME@.@ODE_REVISION@.@ODE_AGE@ \
-	$(libdir)/@ODE_SONAME@
-	ln -s $(libdir)/@ODE_SONAME@.@ODE_REVISION@.@ODE_AGE@ \
-	$(libdir)/@ODE_SONAME@.@ODE_REVISION@
-	/sbin/ldconfig
-else
-install-exec-hook:
-endif
+pkgconfigdir = $(libdir)/pkgconfig
+pkgconfig_DATA = ode.pc

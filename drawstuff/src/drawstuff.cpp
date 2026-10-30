@@ -25,9 +25,10 @@
 simple graphics.
 
 the following command line flags can be used (typically under unix)
-	-notex		Do not use any textures
-	-noshadow[s]	Do not draw any shadows
-	-pause		Start the simulation paused
+  -notex              Do not use any textures
+  -noshadow[s]        Do not draw any shadows
+  -pause              Start the simulation paused
+  -texturepath <path> Inform an alternative textures path
 
 TODO
 ----
@@ -40,7 +41,9 @@ manage openGL state changes better
 #include <windows.h>
 #endif
 
-#include <ode/config.h>
+#include <ode/ode.h>
+#include "config.h"
+
 #ifdef HAVE_APPLE_OPENGL_FRAMEWORK
 #include <OpenGL/gl.h>
 #include <OpenGL/glu.h>
@@ -55,10 +58,12 @@ manage openGL state changes better
 //***************************************************************************
 // misc
 
-#ifdef WIN32
+#ifndef DEFAULT_PATH_TO_TEXTURES
+#if 0
 #define DEFAULT_PATH_TO_TEXTURES "..\\textures\\"
 #else
 #define DEFAULT_PATH_TO_TEXTURES "../textures/"
+#endif
 #endif
 
 #ifndef M_PI
@@ -88,16 +93,6 @@ const float sky_height = 1.0f;		// sky height above viewpoint
 //***************************************************************************
 // misc mathematics stuff
 
-#define dCROSS(a,op,b,c) \
-  (a)[0] op ((b)[1]*(c)[2] - (b)[2]*(c)[1]); \
-  (a)[1] op ((b)[2]*(c)[0] - (b)[0]*(c)[2]); \
-  (a)[2] op ((b)[0]*(c)[1] - (b)[1]*(c)[0]);
-
-
-inline float dDOT (const float *a, const float *b)
-  { return ((a)[0]*(b)[0] + (a)[1]*(b)[1] + (a)[2]*(b)[2]); }
-
-
 static void normalizeVector3 (float v[3])
 {
   float len = v[0]*v[0] + v[1]*v[1] + v[2]*v[2];
@@ -112,6 +107,17 @@ static void normalizeVector3 (float v[3])
     v[1] *= len;
     v[2] *= len;
   }
+}
+
+static void crossProduct3(float res[3], const float a[3], const float b[3])
+{
+  float res_0 = a[1]*b[2] - a[2]*b[1];
+  float res_1 = a[2]*b[0] - a[0]*b[2];
+  float res_2 = a[0]*b[1] - a[1]*b[0];
+  // Only assign after all the calculations are over to avoid incurring memory aliasing
+  res[0] = res_0;
+  res[1] = res_1;
+  res[2] = res_2;
 }
 
 //***************************************************************************
@@ -388,17 +394,16 @@ static void setShadowTransform()
   glMultMatrixf (matrix);
 }
 
-static void drawConvex (float *_planes,unsigned int _planecount,
-			float *_points,
-			unsigned int _pointcount,
-			unsigned int *_polygons)
+static void drawConvex (const float *_planes, unsigned int _planecount,
+			const float *_points, unsigned int /*_pointcount*/,
+			const unsigned int *_polygons)
 {
   unsigned int polyindex=0;
   for(unsigned int i=0;i<_planecount;++i)
     {
       unsigned int pointcount=_polygons[polyindex];
       polyindex++;
-      glBegin (GL_POLYGON);
+      glBegin (GL_POLYGON);      
        glNormal3f(_planes[(i*4)+0],
 		  _planes[(i*4)+1],
 		  _planes[(i*4)+2]);
@@ -413,10 +418,9 @@ static void drawConvex (float *_planes,unsigned int _planecount,
     }
 }
 
-static void drawConvexD (double *_planes,unsigned int _planecount,
-			 double *_points,
-			 unsigned int _pointcount,
-			 unsigned int *_polygons)
+static void drawConvexD (const double *_planes, unsigned int _planecount,
+			 const double *_points, unsigned int /*_pointcount*/,
+			 const unsigned int *_polygons)
 {
   unsigned int polyindex=0;
   for(unsigned int i=0;i<_planecount;++i)
@@ -621,7 +625,7 @@ static void drawTriangle (const float *v0, const float *v1, const float *v2, int
   v[0] = v2[0] - v0[0];
   v[1] = v2[1] - v0[1];
   v[2] = v2[2] - v0[2];
-  dCROSS (normal,=,u,v);
+  crossProduct3(normal,u,v);
   normalizeVector3 (normal);
 
   glBegin(solid ? GL_TRIANGLES : GL_LINE_STRIP);
@@ -641,7 +645,7 @@ static void drawTriangleD (const double *v0, const double *v1, const double *v2,
   v[0] = float( v2[0] - v0[0] );
   v[1] = float( v2[1] - v0[1] );
   v[2] = float( v2[2] - v0[2] );
-  dCROSS (normal,=,u,v);
+  crossProduct3(normal,u,v);
   normalizeVector3 (normal);
 
   glBegin(solid ? GL_TRIANGLES : GL_LINE_STRIP);
@@ -741,8 +745,6 @@ static void drawCapsule (float l, float r)
     start_nx = start_nx2;
     start_ny = start_ny2;
   }
-
-  glPopMatrix();
 }
 
 
@@ -846,7 +848,7 @@ static void wrapCameraAngles()
 }
 
 
-// call this to update the current camera position. the bits in `mode' say
+// call this to update the current camera position. the bits in 'mode' say
 // if the left (1), middle (2) or right (4) mouse button is pressed, and
 // (deltax,deltay) is the amount by which the mouse pointer has moved.
 
@@ -884,33 +886,43 @@ static int use_shadows=1;		// 1 if shadows to be drawn
 static Texture *sky_texture = 0;
 static Texture *ground_texture = 0;
 static Texture *wood_texture = 0;
+static Texture *checkered_texture = 0;
+
+static Texture *texture[4+1]; // +1 since index 0 is not used
 
 
-#ifndef macintosh
 
-void dsStartGraphics (int width, int height, dsFunctions *fn)
+#if !defined(macintosh) || defined(ODE_PLATFORM_OSX)
+
+void dsStartGraphics (int /*width*/, int /*height*/, dsFunctions *fn)
 {
-  char *prefix = DEFAULT_PATH_TO_TEXTURES;
+
+  const char *prefix = DEFAULT_PATH_TO_TEXTURES;
   if (fn->version >= 2 && fn->path_to_textures) prefix = fn->path_to_textures;
   char *s = (char*) alloca (strlen(prefix) + 20);
 
   strcpy (s,prefix);
   strcat (s,"/sky.ppm");
-  sky_texture = new Texture (s);
+  texture[DS_SKY] = sky_texture = new Texture (s);
 
   strcpy (s,prefix);
   strcat (s,"/ground.ppm");
-  ground_texture = new Texture (s);
+  texture[DS_GROUND] = ground_texture = new Texture (s);
 
   strcpy (s,prefix);
   strcat (s,"/wood.ppm");
-  wood_texture = new Texture (s);
+  texture[DS_WOOD] = wood_texture = new Texture (s);
+
+  strcpy (s,prefix);
+  strcat (s,"/checkered.ppm");
+  texture[DS_CHECKERED] = checkered_texture = new Texture (s);
 }
 
 #else // macintosh
 
 void dsStartGraphics (int width, int height, dsFunctions *fn)
 {
+
    // All examples build into the same dir
    char *prefix = "::::drawstuff:textures";
    char *s = (char*) alloca (strlen(prefix) + 20);
@@ -1198,7 +1210,7 @@ static void setupDrawingMode()
   if (tnum) {
     if (use_textures) {
       glEnable (GL_TEXTURE_2D);
-      wood_texture->bind (1);
+      texture[tnum]->bind (1);
       glEnable (GL_TEXTURE_GEN_S);
       glEnable (GL_TEXTURE_GEN_T);
       glTexGeni (GL_S,GL_TEXTURE_GEN_MODE,GL_OBJECT_LINEAR);
@@ -1267,6 +1279,9 @@ extern "C" void dsSimulationLoop (int argc, char **argv,
     if (strcmp(argv[i],"-noshadow")==0) use_shadows = 0;
     if (strcmp(argv[i],"-noshadows")==0) use_shadows = 0;
     if (strcmp(argv[i],"-pause")==0) initial_pause = 1;
+    if (strcmp(argv[i],"-texturepath")==0)
+      if (++i < argc)
+        fn->path_to_textures = argv[i];
   }
 
   if (fn->version > DS_VERSION)
@@ -1362,10 +1377,9 @@ extern "C" void dsDrawBox (const float pos[3], const float R[12],
 }
 
 extern "C" void dsDrawConvex (const float pos[3], const float R[12],
-			      float *_planes,unsigned int _planecount,
-			      float *_points,
-			      unsigned int _pointcount,
-			      unsigned int *_polygons)
+			      const float *_planes,unsigned int _planecount,
+			      const float *_points, unsigned int _pointcount,
+			      const unsigned int *_polygons)
 {
   if (current_state != 2) dsError ("drawing function called outside simulation loop");
   setupDrawingMode();
@@ -1434,6 +1448,20 @@ extern "C" void dsDrawTriangle (const float pos[3], const float R[12],
 }
 
 
+extern "C" void dsDrawTriangles (const float pos[3], const float R[12],
+				const float *v, int n, int solid)
+{
+  if (current_state != 2) dsError ("drawing function called outside simulation loop");
+  setupDrawingMode();
+  glShadeModel (GL_FLAT);
+  setTransform (pos,R);
+  int i;
+  for (i = 0; i < n; ++i, v += 9)
+      drawTriangle (v, v + 3, v + 6, solid);
+  glPopMatrix();
+}
+
+
 extern "C" void dsDrawCylinder (const float pos[3], const float R[12],
 				float length, float radius)
 {
@@ -1478,10 +1506,8 @@ extern "C" void dsDrawCapsule (const float pos[3], const float R[12],
 }
 
 
-void dsDrawLine (const float pos1[3], const float pos2[3])
+static void drawLine(const float pos1[3], const float pos2[3])
 {
-  setupDrawingMode();
-  glColor3f (color[0],color[1],color[2]);
   glDisable (GL_LIGHTING);
   glLineWidth (2);
   glShadeModel (GL_FLAT);
@@ -1492,8 +1518,26 @@ void dsDrawLine (const float pos1[3], const float pos2[3])
 }
 
 
-void dsDrawBoxD (const double pos[3], const double R[12],
-		 const double sides[3])
+extern "C" void dsDrawLine (const float pos1[3], const float pos2[3])
+{
+  setupDrawingMode();
+  glColor4f(color[0], color[1], color[2], color[3]);
+  drawLine(pos1, pos2);
+
+  if (use_shadows) {
+    setShadowDrawingMode();
+    setShadowTransform();
+
+    drawLine(pos1, pos2);
+
+    glPopMatrix();
+    glDepthRange (0,1);
+  }
+}
+
+
+extern "C" void dsDrawBoxD (const double pos[3], const double R[12],
+                            const double sides[3])
 {
   int i;
   float pos2[3],R2[12],fsides[3];
@@ -1504,10 +1548,9 @@ void dsDrawBoxD (const double pos[3], const double R[12],
 }
 
 extern "C" void dsDrawConvexD (const double pos[3], const double R[12],
-			       double *_planes,unsigned int _planecount,
-			       double *_points,
-			       unsigned int _pointcount,
-			       unsigned int *_polygons)
+			       const double *_planes, unsigned int _planecount,
+			       const double *_points, unsigned int _pointcount,
+			       const unsigned int *_polygons)
 {
   if (current_state != 2) dsError ("drawing function called outside simulation loop");
   setupDrawingMode();
@@ -1553,6 +1596,24 @@ void dsDrawTriangleD (const double pos[3], const double R[12],
 }
 
 
+extern "C" void dsDrawTrianglesD (const double pos[3], const double R[12],
+				const double *v, int n, int solid)
+{
+  int i;
+  float pos2[3],R2[12];
+  for (i=0; i<3; i++) pos2[i]=(float)pos[i];
+  for (i=0; i<12; i++) R2[i]=(float)R[i];
+
+  if (current_state != 2) dsError ("drawing function called outside simulation loop");
+  setupDrawingMode();
+  glShadeModel (GL_FLAT);
+  setTransform (pos2,R2);
+  for (i = 0; i < n; ++i, v += 9)
+      drawTriangleD (v, v + 3, v + 6, solid);
+  glPopMatrix();
+}
+
+
 void dsDrawCylinderD (const double pos[3], const double R[12],
 		      float length, float radius)
 {
@@ -1594,4 +1655,17 @@ void dsSetSphereQuality (int n)
 void dsSetCapsuleQuality (int n)
 {
   capped_cylinder_quality = n;
+}
+
+void dsSetDrawMode(int mode)
+{
+  switch(mode)
+    {
+    case DS_POLYFILL:
+      glPolygonMode(GL_FRONT,GL_FILL);
+      break;
+    case DS_WIREFRAME:
+      glPolygonMode(GL_FRONT,GL_LINE);
+      break;
+    }
 }

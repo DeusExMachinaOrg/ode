@@ -43,7 +43,7 @@ using namespace Opcode;
 //! OBB-triangle test
 #define OBB_PRIM(prim_index, flag)												\
 	/* Request vertices from the app */											\
-	VertexPointers VP;	mIMesh->GetTriangle(VP, prim_index);					\
+	VertexPointers VP;	ConversionArea VC;	mIMesh->GetTriangle(VP, prim_index, VC); \
 	/* Transform them in a common space */										\
 	TransformPoint(mLeafVerts[0], *VP.Vertex[0], mRModelToBox, mTModelToBox);	\
 	TransformPoint(mLeafVerts[1], *VP.Vertex[1], mRModelToBox, mTModelToBox);	\
@@ -113,7 +113,7 @@ bool OBBCollider::Collide(OBBCache& cache, const OBB& box, const Model& model, c
 	{
 		if(model.IsQuantized())
 		{
-			const AABBQuantizedNoLeafTree* Tree = (const AABBQuantizedNoLeafTree*)model.GetTree();
+			const AABBQuantizedNoLeafTree* Tree = static_cast<const AABBQuantizedNoLeafTree *>(model.GetTree());
 
 			// Setup dequantization coeffs
 			mCenterCoeff	= Tree->mCenterCoeff;
@@ -125,7 +125,7 @@ bool OBBCollider::Collide(OBBCache& cache, const OBB& box, const Model& model, c
 		}
 		else
 		{
-			const AABBNoLeafTree* Tree = (const AABBNoLeafTree*)model.GetTree();
+			const AABBNoLeafTree* Tree = static_cast<const AABBNoLeafTree *>(model.GetTree());
 
 			// Perform collision query
 			if(SkipPrimitiveTests())	_CollideNoPrimitiveTest(Tree->GetNodes());
@@ -136,7 +136,7 @@ bool OBBCollider::Collide(OBBCache& cache, const OBB& box, const Model& model, c
 	{
 		if(model.IsQuantized())
 		{
-			const AABBQuantizedTree* Tree = (const AABBQuantizedTree*)model.GetTree();
+			const AABBQuantizedTree* Tree = static_cast<const AABBQuantizedTree *>(model.GetTree());
 
 			// Setup dequantization coeffs
 			mCenterCoeff	= Tree->mCenterCoeff;
@@ -148,7 +148,7 @@ bool OBBCollider::Collide(OBBCache& cache, const OBB& box, const Model& model, c
 		}
 		else
 		{
-			const AABBCollisionTree* Tree = (const AABBCollisionTree*)model.GetTree();
+			const AABBCollisionTree* Tree = static_cast<const AABBCollisionTree *>(model.GetTree());
 
 			// Perform collision query
 			if(SkipPrimitiveTests())	_CollideNoPrimitiveTest(Tree->GetNodes());
@@ -675,7 +675,7 @@ bool HybridOBBCollider::Collide(OBBCache& cache, const OBB& box, const HybridMod
 	{
 		if(model.IsQuantized())
 		{
-			const AABBQuantizedNoLeafTree* Tree = (const AABBQuantizedNoLeafTree*)model.GetTree();
+			const AABBQuantizedNoLeafTree* Tree = static_cast<const AABBQuantizedNoLeafTree *>(model.GetTree());
 
 			// Setup dequantization coeffs
 			mCenterCoeff	= Tree->mCenterCoeff;
@@ -686,7 +686,7 @@ bool HybridOBBCollider::Collide(OBBCache& cache, const OBB& box, const HybridMod
 		}
 		else
 		{
-			const AABBNoLeafTree* Tree = (const AABBNoLeafTree*)model.GetTree();
+			const AABBNoLeafTree* Tree = static_cast<const AABBNoLeafTree *>(model.GetTree());
 
 			// Perform collision query - we don't want primitive tests here!
 			_CollideNoPrimitiveTest(Tree->GetNodes());
@@ -696,7 +696,7 @@ bool HybridOBBCollider::Collide(OBBCache& cache, const OBB& box, const HybridMod
 	{
 		if(model.IsQuantized())
 		{
-			const AABBQuantizedTree* Tree = (const AABBQuantizedTree*)model.GetTree();
+			const AABBQuantizedTree* Tree = static_cast<const AABBQuantizedTree *>(model.GetTree());
 
 			// Setup dequantization coeffs
 			mCenterCoeff	= Tree->mCenterCoeff;
@@ -707,7 +707,7 @@ bool HybridOBBCollider::Collide(OBBCache& cache, const OBB& box, const HybridMod
 		}
 		else
 		{
-			const AABBCollisionTree* Tree = (const AABBCollisionTree*)model.GetTree();
+			const AABBCollisionTree* Tree = static_cast<const AABBCollisionTree *>(model.GetTree());
 
 			// Perform collision query - we don't want primitive tests here!
 			_CollideNoPrimitiveTest(Tree->GetNodes());

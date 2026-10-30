@@ -382,7 +382,7 @@ ODE_API void dGeomEnable (dGeomID geom);
  * the enabled state.
  *
  * @param geom   the geom to disable
- * @sa dGeomDisable
+ * @sa dGeomEnable
  * @sa dGeomIsEnabled
  * @ingroup collide
  */
@@ -399,10 +399,127 @@ ODE_API void dGeomDisable (dGeomID geom);
  * @param geom   the geom to query
  * @returns Non-zero if the geom is enabled, zero otherwise.
  * @sa dGeomDisable
- * @sa dGeomIsEnabled
+ * @sa dGeomEnable
  * @ingroup collide
  */
 ODE_API int dGeomIsEnabled (dGeomID geom);
+
+
+enum
+{
+	dGeomCommonControlClass = 0,
+	dGeomColliderControlClass = 1
+};
+
+enum
+{
+	dGeomCommonAnyControlCode = 0,
+
+	dGeomColliderSetMergeSphereContactsControlCode = 1,
+	dGeomColliderGetMergeSphereContactsControlCode = 2
+};
+
+enum
+{
+    dGeomColliderMergeContactsValue__Default = 0, /* Used with Set... to restore default value*/
+	dGeomColliderMergeContactsValue_None = 1,
+	dGeomColliderMergeContactsValue_Normals = 2,
+	dGeomColliderMergeContactsValue_Full = 3
+};
+
+/**
+ * @brief Execute low level control operation for geometry.
+ *
+ * The variable the dataSize points to must be initialized before the call.
+ * If the size does not match the one expected for the control class/code function
+ * changes it to the size expected and returns failure. This implies the function 
+ * can be called with NULL data and zero size to test if control class/code is supported
+ * and obtain required data size for it.
+ *
+ * dGeomCommonAnyControlCode applies to any control class and returns success if 
+ * at least one control code is available for the given class with given geom.
+ *
+ * Currently there are the following control classes supported:
+ *  @li dGeomColliderControlClass
+ *
+ * For dGeomColliderControlClass there are the following codes available:
+ *  @li dGeomColliderSetMergeSphereContactsControlCode (arg of type int, dGeomColliderMergeContactsValue_*)
+ *  @li dGeomColliderGetMergeSphereContactsControlCode (arg of type int, dGeomColliderMergeContactsValue_*)
+ *
+ * @param geom   the geom to control
+ * @param controlClass   the control class
+ * @param controlCode   the control code for the class
+ * @param dataValue   the control argument pointer
+ * @param dataSize   the control argument size provided or expected
+ * @returns Boolean execution status
+ * @ingroup collide
+ */
+ODE_API int dGeomLowLevelControl (dGeomID geom, int controlClass, int controlCode, void *dataValue, int *dataSize);
+
+
+/**
+ * @brief Get world position of a relative point on geom.
+ *
+ * Calling this function on a non-placeable geom results in the same point being
+ * returned.
+ *
+ * @ingroup collide
+ * @param result will contain the result.
+ */
+ODE_API void dGeomGetRelPointPos
+(
+  dGeomID geom, dReal px, dReal py, dReal pz,
+  dVector3 result
+);
+
+/**
+ * @brief takes a point in global coordinates and returns
+ * the point's position in geom-relative coordinates.
+ *
+ * Calling this function on a non-placeable geom results in the same point being
+ * returned.
+ *
+ * @remarks
+ * This is the inverse of dGeomGetRelPointPos()
+ * @ingroup collide
+ * @param result will contain the result.
+ */
+ODE_API void dGeomGetPosRelPoint
+(
+  dGeomID geom, dReal px, dReal py, dReal pz,
+  dVector3 result
+);
+
+/**
+ * @brief Convert from geom-local to world coordinates.
+ *
+ * Calling this function on a non-placeable geom results in the same vector being
+ * returned.
+ *
+ * @ingroup collide
+ * @param result will contain the result.
+ */
+ODE_API void dGeomVectorToWorld
+(
+  dGeomID geom, dReal px, dReal py, dReal pz,
+  dVector3 result
+);
+
+/**
+ * @brief Convert from world to geom-local coordinates.
+ *
+ * Calling this function on a non-placeable geom results in the same vector being
+ * returned.
+ *
+ * @ingroup collide
+ * @param result will contain the result.
+ */
+ODE_API void dGeomVectorFromWorld
+(
+  dGeomID geom, dReal px, dReal py, dReal pz,
+  dVector3 result
+);
+
 
 /* ************************************************************************ */
 /* geom offset from body */
@@ -620,6 +737,11 @@ ODE_API void dGeomGetOffsetQuaternion (dGeomID geom, dQuaternion result);
 /* ************************************************************************ */
 /* collision detection */
 
+/*
+ *	Just generate any contacts (disables any contact refining).
+ */
+#define CONTACTS_UNIMPORTANT			0x80000000
+
 /**
  *
  * @brief Given two geoms o1 and o2 that potentially intersect,
@@ -633,11 +755,12 @@ ODE_API void dGeomGetOffsetQuaternion (dGeomID geom, dQuaternion result);
  *
  * @param flags The flags specify how contacts should be generated if
  * the geoms touch. The lower 16 bits of flags is an integer that
- * specifies the maximum number of contact points to generate. Note
- * that if this number is zero, this function just pretends that it is
- * one -- in other words you can not ask for zero contacts. All other bits
- * in flags must be zero. In the future the other bits may be used to
- * select from different contact generation strategies.
+ * specifies the maximum number of contact points to generate. You must
+ * ask for at least one contact. 
+ * Additionally, following bits may be set:
+ * CONTACTS_UNIMPORTANT -- just generate any contacts (skip contact refining).
+ * All other bits in flags must be set to zero. In the future the other bits 
+ * may be used to select from different contact generation strategies.
  *
  * @param contact Points to an array of dContactGeom structures. The array
  * must be able to hold at least the maximum number of contacts. These
@@ -723,6 +846,11 @@ ODE_API void dSpaceCollide (dSpaceID space, void *data, dNearCallback *callback)
  * function may be passed these contained spaces as one or both geom
  * arguments.
  *
+ * @remarks Sublevel value of space affects how the spaces are iterated.
+ * Both spaces are recursed only if their sublevels match. Otherwise, only
+ * the space with greater sublevel is recursed and the one with lesser sublevel
+ * is used as a geom itself.
+ *
  * @remarks dSpaceCollide2() is guaranteed to pass all intersecting geom
  * pairs to the callback function, but may also pass close but
  * non-intersecting pairs. The number of these calls depends on the
@@ -731,6 +859,7 @@ ODE_API void dSpaceCollide (dSpaceID space, void *data, dNearCallback *callback)
  * callback.
  *
  * @sa dSpaceCollide
+ * @sa dSpaceSetSublevel
  * @ingroup collide
  */
 ODE_API void dSpaceCollide2 (dGeomID space1, dGeomID space2, void *data, dNearCallback *callback);
@@ -760,6 +889,7 @@ enum {
   dFirstSpaceClass,
   dSimpleSpaceClass = dFirstSpaceClass,
   dHashSpaceClass,
+  dSweepAndPruneSpaceClass, /* SAP */
   dQuadTreeSpaceClass,
   dLastSpaceClass = dQuadTreeSpaceClass,
 
@@ -815,7 +945,7 @@ ODE_API dReal dGeomSphereGetRadius (dGeomID sphere);
 
 
 /**
- * @brief Calculate the depth of the a given point within a sphere.
+ * @brief Calculate the depth of the given point within a sphere.
  *
  * @param sphere  the sphere to query.
  * @param x       the X coordinate of the point.
@@ -831,19 +961,21 @@ ODE_API dReal dGeomSphereGetRadius (dGeomID sphere);
 ODE_API dReal dGeomSpherePointDepth (dGeomID sphere, dReal x, dReal y, dReal z);
 
 
-//--> Convex Functions
+/*--> Convex Functions*/
 ODE_API dGeomID dCreateConvex (dSpaceID space,
-			       dReal *_planes,
+			       const dReal *_planes,
 			       unsigned int _planecount,
-			       dReal *_points,
-			       unsigned int _pointcount,unsigned int *_polygons);
+			       const dReal *_points,
+			       unsigned int _pointcount,
+                   const unsigned int *_polygons);
 
 ODE_API void dGeomSetConvex (dGeomID g,
-			     dReal *_planes,
+			     const dReal *_planes,
 			     unsigned int _count,
-			     dReal *_points,
-			     unsigned int _pointcount,unsigned int *_polygons);
-//<-- Convex Functions
+			     const dReal *_points,
+			     unsigned int _pointcount,
+                 const unsigned int *_polygons);
+/*<-- Convex Functions*/
 
 /**
  * @defgroup collide_box Box Class
@@ -920,7 +1052,7 @@ ODE_API void dGeomCapsuleSetParams (dGeomID ccylinder, dReal radius, dReal lengt
 ODE_API void dGeomCapsuleGetParams (dGeomID ccylinder, dReal *radius, dReal *length);
 ODE_API dReal dGeomCapsulePointDepth (dGeomID ccylinder, dReal x, dReal y, dReal z);
 
-// For now we want to have a backwards compatible C-API, note: C++ API is not.
+/* For now we want to have a backwards compatible C-API, note: C++ API is not.*/
 #define dCreateCCylinder dCreateCapsule
 #define dGeomCCylinderSetParams dGeomCapsuleSetParams
 #define dGeomCCylinderGetParams dGeomCapsuleGetParams
@@ -943,27 +1075,31 @@ ODE_API void dGeomRayGet (dGeomID ray, dVector3 start, dVector3 dir);
  * These flags are currently only noticed by the trimesh collider, because
  * they can make a major differences there.
  */
-ODE_API void dGeomRaySetParams (dGeomID g, int FirstContact, int BackfaceCull);
-ODE_API void dGeomRayGetParams (dGeomID g, int *FirstContact, int *BackfaceCull);
+ODE_API_DEPRECATED ODE_API void dGeomRaySetParams (dGeomID g, int FirstContact, int BackfaceCull);
+ODE_API_DEPRECATED ODE_API void dGeomRayGetParams (dGeomID g, int *FirstContact, int *BackfaceCull);
+ODE_API void dGeomRaySetFirstContact (dGeomID g, int firstContact);
+ODE_API int dGeomRayGetFirstContact (dGeomID g);
+ODE_API void dGeomRaySetBackfaceCull (dGeomID g, int backfaceCull);
+ODE_API int dGeomRayGetBackfaceCull (dGeomID g);
 ODE_API void dGeomRaySetClosestHit (dGeomID g, int closestHit);
 ODE_API int dGeomRayGetClosestHit (dGeomID g);
 
 #include "collision_trimesh.h"
 
-ODE_API dGeomID dCreateGeomTransform (dSpaceID space);
-ODE_API void dGeomTransformSetGeom (dGeomID g, dGeomID obj);
-ODE_API dGeomID dGeomTransformGetGeom (dGeomID g);
-ODE_API void dGeomTransformSetCleanup (dGeomID g, int mode);
-ODE_API int dGeomTransformGetCleanup (dGeomID g);
-ODE_API void dGeomTransformSetInfo (dGeomID g, int mode);
-ODE_API int dGeomTransformGetInfo (dGeomID g);
+ODE_API_DEPRECATED ODE_API dGeomID dCreateGeomTransform (dSpaceID space);
+ODE_API_DEPRECATED ODE_API void dGeomTransformSetGeom (dGeomID g, dGeomID obj);
+ODE_API_DEPRECATED ODE_API dGeomID dGeomTransformGetGeom (dGeomID g);
+ODE_API_DEPRECATED ODE_API void dGeomTransformSetCleanup (dGeomID g, int mode);
+ODE_API_DEPRECATED ODE_API int dGeomTransformGetCleanup (dGeomID g);
+ODE_API_DEPRECATED ODE_API void dGeomTransformSetInfo (dGeomID g, int mode);
+ODE_API_DEPRECATED ODE_API int dGeomTransformGetInfo (dGeomID g);
 
 
 /* ************************************************************************ */
 /* heightfield functions */
 
 
-// Data storage for heightfield data.
+/* Data storage for heightfield data.*/
 struct dxHeightfieldData;
 typedef struct dxHeightfieldData* dHeightfieldDataID;
 
@@ -1024,7 +1160,7 @@ ODE_API dGeomID dCreateHeightfield( dSpaceID space,
  * dGeomHeightfieldDataBuildFloat.
  * @ingroup collide
  */
-ODE_API dHeightfieldDataID dGeomHeightfieldDataCreate();
+ODE_API dHeightfieldDataID dGeomHeightfieldDataCreate(void);
 
 
 /**
@@ -1338,15 +1474,15 @@ ODE_API int dBoxTouchesBox (const dVector3 _p1, const dMatrix3 R1,
 		    const dVector3 side1, const dVector3 _p2,
 		    const dMatrix3 R2, const dVector3 side2);
 
+/* The meaning of flags parameter is the same as in dCollide()*/
 ODE_API int dBoxBox (const dVector3 p1, const dMatrix3 R1,
 	     const dVector3 side1, const dVector3 p2,
 	     const dMatrix3 R2, const dVector3 side2,
 	     dVector3 normal, dReal *depth, int *return_code,
-	     int maxc, dContactGeom *contact, int skip);
+	     int flags, dContactGeom *contact, int skip);
 
 ODE_API void dInfiniteAABB (dGeomID geom, dReal aabb[6]);
-ODE_API void dInitODE(void);
-ODE_API void dCloseODE(void);
+
 
 /* ************************************************************************ */
 /* custom classes */
@@ -1369,6 +1505,17 @@ typedef struct dGeomClass {
 ODE_API int dCreateGeomClass (const dGeomClass *classptr);
 ODE_API void * dGeomGetClassData (dGeomID);
 ODE_API dGeomID dCreateGeom (int classnum);
+
+/**
+ * @brief Sets a custom collider function for two geom classes. 
+ *
+ * @param i The first geom class handled by this collider
+ * @param j The second geom class handled by this collider
+ * @param fn The collider function to use to determine collisions.
+ * @ingroup collide
+ */
+ODE_API void dSetColliderOverride (int i, int j, dColliderFn *fn);
+
 
 /* ************************************************************************ */
 

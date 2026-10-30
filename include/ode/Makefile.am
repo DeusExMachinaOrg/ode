@@ -1,24 +1,34 @@
-libglitch_includedir = $(includedir)/ode
-libglitch_include_HEADERS = 	collision_trimesh.h \
-				mass.h \
-				odecpp.h \
-				common.h \
-				matrix.h \
-				odecpp_collision.h \
-				compatibility.h \
-				memory.h \
-				odecpp_old.h \
-				contact.h \
-				misc.h \
-				odemath.h \
-				collision.h \
-				error.h \
-				objects.h \
-				rotation.h \
-				collision_space.h \
-				export-dif.h \
-				ode.h  \
-				timer.h \
-				config.h
+libode_la_includedir = $(includedir)/ode
+libode_la_include_HEADERS = \
+    collision.h \
+    collision_space.h \
+    collision_trimesh.h \
+    common.h \
+    compatibility.h \
+    contact.h \
+    cooperative.h \
+    error.h \
+    export-dif.h \
+    mass.h \
+    matrix.h matrix_coop.h \
+    memory.h \
+    misc.h \
+    objects.h \
+    ode.h \
+    odeconfig.h \
+    odecpp.h \
+    odecpp_collision.h \
+    odeinit.h \
+    odemath.h \
+    odemath_legacy.h \
+    rotation.h \
+    threading.h \
+    threading_impl.h \
+    timer.h
 
-EXTRA_DIST = config.h.in
+
+EXTRA_DIST = README precision.h.in version.h.in
+
+dist_libode_la_include_HEADERS = precision.h version.h
+
+

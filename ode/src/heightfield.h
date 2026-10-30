@@ -1,3 +1,25 @@
+/*************************************************************************
+ *                                                                       *
+ * Open Dynamics Engine, Copyright (C) 2001,2002 Russell L. Smith.       *
+ * All rights reserved.  Email: russ@q12.org   Web: www.q12.org          *
+ *                                                                       *
+ * This library is free software; you can redistribute it and/or         *
+ * modify it under the terms of EITHER:                                  *
+ *   (1) The GNU Lesser General Public License as published by the Free  *
+ *       Software Foundation; either version 2.1 of the License, or (at  *
+ *       your option) any later version. The text of the GNU Lesser      *
+ *       General Public License is included with this library in the     *
+ *       file LICENSE.TXT.                                               *
+ *   (2) The BSD-style license that is included with this library in     *
+ *       the file LICENSE-BSD.TXT.                                       *
+ *                                                                       *
+ * This library is distributed in the hope that it will be useful,       *
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of        *
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the files    *
+ * LICENSE.TXT and LICENSE-BSD.TXT for more details.                     *
+ *                                                                       *
+ *************************************************************************/
+
 // dHeightfield Collider
 //  Martijn Buijs 2006 http://home.planet.nl/~buijs512/
 // Based on Terrain & Cone contrib by:
@@ -14,6 +36,10 @@
 #define HEIGHTFIELDMAXCONTACTPERCELL 10
 
 
+class HeightFieldVertex;
+class HeightFieldEdge;
+class HeightFieldTriangle;
+
 //
 // dxHeightfieldData
 //
@@ -23,8 +49,9 @@ struct dxHeightfieldData
 {
     dReal m_fWidth;				// World space heightfield dimension on X axis
     dReal m_fDepth;				// World space heightfield dimension on Z axis
-    dReal m_fSampleWidth;		// Vertex count on X axis edge (== m_vWidth / (m_nWidthSamples-1))
-    dReal m_fSampleDepth;		// Vertex count on Z axis edge (== m_vDepth / (m_nDepthSamples-1))
+    dReal m_fSampleWidth;		// Vertex spacing on X axis edge (== m_vWidth / (m_nWidthSamples-1))
+    dReal m_fSampleDepth;		// Vertex spacing on Z axis edge (== m_vDepth / (m_nDepthSamples-1))
+    dReal m_fSampleZXAspect;    // Relation of Z axis spacing to X axis spacing (== m_fSampleDepth / m_fSampleWidth)
     dReal m_fInvSampleWidth;		// Cache of inverse Vertex count on X axis edge (== m_vWidth / (m_nWidthSamples-1))
     dReal m_fInvSampleDepth;		// Cache of inverse Vertex count on Z axis edge (== m_vDepth / (m_nDepthSamples-1))
 
@@ -60,17 +87,15 @@ struct dxHeightfieldData
 
     void ComputeHeightBounds();
 
-    bool IsOnHeightfield  ( const dReal * const CellOrigin, const dReal * const pos,  const bool isABC) const;
-    bool IsOnHeightfield2  ( const dReal * const CellOrigin, const dReal * const pos,  const bool isABC) const;
+    bool IsOnHeightfield2  ( const HeightFieldVertex * const CellCorner, 
+        const dReal * const pos,  const bool isABC) const;
 
     dReal GetHeight(int x, int z);
     dReal GetHeight(dReal x, dReal z);
 
 };
 
-class HeightFieldVertex;
-class HeightFieldEdge;
-class HeightFieldTriangle;
+typedef int HeightFieldVertexCoords[2];
 
 class HeightFieldVertex
 {
@@ -78,6 +103,7 @@ public:
     HeightFieldVertex(){};
 
     dVector3 vertex;
+    HeightFieldVertexCoords coords;
     bool state;
 };
 
@@ -88,11 +114,7 @@ public:
 
     HeightFieldVertex   *vertices[2];
 };
-//
-// HeightFieldTriangle
-//
-// HeightFieldTriangle composing heightfield mesh
-//
+
 class HeightFieldTriangle
 {
 public:
@@ -111,33 +133,29 @@ public:
     bool                isUp;
     bool                state;
 };
-//
-// HeightFieldTriangle
-//
-// HeightFieldPlane composing heightfield mesh
-//
+
 class HeightFieldPlane
 {
 public:
     HeightFieldPlane():
-      trianglelist(0),
-      trianglelistReservedSize(0),
-      trianglelistCurrentSize(0)
+        trianglelist(0),
+        trianglelistReservedSize(0),
+        trianglelistCurrentSize(0)
     {
+    }
 
-    };
     ~HeightFieldPlane()
     {
         delete [] trianglelist;
-    };
+    }
 
     inline void setMinMax()
     {
-        const size_t asize = trianglelistCurrentSize;
+        const sizeint asize = trianglelistCurrentSize;
         if (asize > 0)
         {  
             maxAAAB = trianglelist[0]->maxAAAB;
-            for (size_t k = 1; asize > k; k++)
+            for (sizeint k = 1; asize > k; k++)
             {   
                 if (trianglelist[k]->maxAAAB >  maxAAAB)
                     maxAAAB = trianglelist[k]->maxAAAB;
@@ -145,7 +163,7 @@ public:
         }
     };
 
-    void resetTriangleListSize(const size_t newSize)
+    void resetTriangleListSize(const sizeint newSize)
     {
         if (trianglelistReservedSize < newSize)
         {
@@ -158,16 +176,19 @@ public:
 
     void addTriangle(HeightFieldTriangle *tri)
     {
+        dIASSERT(trianglelistCurrentSize < trianglelistReservedSize);
+
         trianglelist[trianglelistCurrentSize++] = tri;
     }
 
     HeightFieldTriangle **trianglelist;
-    size_t              trianglelistReservedSize;
-    size_t              trianglelistCurrentSize;
+    sizeint             trianglelistReservedSize;
+    sizeint             trianglelistCurrentSize;
 
     dReal   maxAAAB;
     dReal   planeDef[4];
 };
+
 //
 // dxHeightfield
 //
@@ -186,19 +207,36 @@ struct dxHeightfield : public dxGeom
         dxGeom *o2, const int numMaxContacts,
         int flags, dContactGeom *contact, int skip );
 
+    enum
+    {
+        TEMP_PLANE_BUFFER_ELEMENT_COUNT_ALIGNMENT = 4,
+        TEMP_HEIGHT_BUFFER_ELEMENT_COUNT_ALIGNMENT_X = 4,
+        TEMP_HEIGHT_BUFFER_ELEMENT_COUNT_ALIGNMENT_Z = 4,
+        TEMP_TRIANGLE_BUFFER_ELEMENT_COUNT_ALIGNMENT = 1 // Triangles are easy to reallocate and hard to predict
+    };
+
+    static inline sizeint AlignBufferSize(sizeint value, sizeint alignment) { dIASSERT((alignment & (alignment - 1)) == 0); return (value + (alignment - 1)) & ~(alignment - 1); }
+
+    void  allocateTriangleBuffer(sizeint numTri);
+    void  resetTriangleBuffer();
+    void  allocatePlaneBuffer(sizeint numTri);
+    void  resetPlaneBuffer();
+    void  allocateHeightBuffer(sizeint numX, sizeint numZ);
     void  resetHeightBuffer();
 
-    void  sortPlanes(const size_t numPlanes);
+    void  sortPlanes(const sizeint numPlanes);
 
     HeightFieldPlane    **tempPlaneBuffer;
-    size_t              tempPlaneBufferSize;
+    HeightFieldPlane    *tempPlaneInstances;
+    sizeint             tempPlaneBufferSize;
 
     HeightFieldTriangle *tempTriangleBuffer;
-    size_t              tempTriangleBufferSize;
+    sizeint             tempTriangleBufferSize;
 
     HeightFieldVertex   **tempHeightBuffer;
-    size_t              tempHeightBufferSizeX;
-    size_t              tempHeightBufferSizeZ;
+    HeightFieldVertex   *tempHeightInstances;
+    sizeint             tempHeightBufferSizeX;
+    sizeint             tempHeightBufferSizeZ;
 
 };
 

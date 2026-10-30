@@ -2,7 +2,7 @@
 #define GIM_BOXPRUNING_H_INCLUDED
 
 /*! \file gim_boxpruning.h
-\author Francisco León
+\author Francisco Leï¿½n
 */
 /*
 -----------------------------------------------------------------------------
@@ -53,18 +53,18 @@ Tools for find overlapping objects on a scenary. These functions sort boxes for 
 //! Overlapping pair
 struct GIM_PAIR
 {
-    GUINT m_index1;
-    GUINT m_index2;
+    GUINT32 m_index1;
+    GUINT32 m_index2;
 };
 //typedef struct _GIM_PAIR GIM_PAIR;
 
 //! Box container
 struct GIM_AABB_SET
 {
-    GUINT m_count;
+    GUINT32 m_count;
     aabb3f m_global_bound;//!< Global calculated bound of all boxes
     aabb3f * m_boxes;
-    GUINT * m_maxcoords;//!<Upper corners of the boxes, in integer representation
+    GUINT32 * m_maxcoords;//!<Upper corners of the boxes, in integer representation
     GIM_RSORT_TOKEN * m_sorted_mincoords;//!< sorted min coords (lower corners), with their coord value as the m_key and m_value as the box index
     char m_shared;//!< if m_shared == 0 then the memory is allocated and the set must be destroyed, else the pointers are shared and the set should't be destroyed
 };
@@ -76,7 +76,7 @@ struct GIM_AABB_SET
 #define GIM_DESTROY_PAIR_SET(dynarray) GIM_DYNARRAY_DESTROY(dynarray)
 
 //! Allocate memory for all aabb set.
-void gim_aabbset_alloc(GIM_AABB_SET * aabbset, GUINT count);
+void gim_aabbset_alloc(GIM_AABB_SET * aabbset, GUINT32 count);
 
 //! Destroys the aabb set.
 void gim_aabbset_destroy(GIM_AABB_SET * aabbset);
@@ -137,17 +137,17 @@ void gim_aabbset_bipartite_intersections_brute_force(GIM_AABB_SET * aabbset1,GIM
 /*
                 Brute-Force Vs Sorted pruning
 Different approaches must be applied when colliding sets with different number of
-elements. When sets have less of 100 boxes, is often better to apply force brute
+elements. When sets have less of 100 boxes, it is often better to apply brute force
 approach instead of sorted methods, because at lowlevel bruteforce routines gives
-better perormance and consumes less resources, due of their simplicity.
-But when sets are larger, the complexiity of bruteforce increases exponencially.
+better performance and consumes less resources, due of their simplicity.
+But when sets are larger, the complexiity of bruteforce increases exponentially.
 In the case of large sets, sorted approach is applied. So GIMPACT has the following
 strategies:
 
 On Sorting sets:
 !) When sets have more of 140 boxes, the boxes are sorted by its coded min coord
 and the global box is calculated. But when sets are smaller (less of 140 boxes),
-Is convenient to apply brute force approach.
+it is convenient to apply brute force approach.
 
 *******************************************************************************/
 
@@ -159,7 +159,7 @@ Is convenient to apply brute force approach.
 
 //Use these functions for general initialization
 
-//! Initalizes the set. Sort Boxes if needed.
+//! Initalizes the set. Sort boxes if needed.
 /*!
 \pre aabbset must be allocated. And the boxes must be already set.
 \post If the set has less of GIM_MIN_SORTED_BIPARTITE_PRUNING_BOXES boxes, only calcs the global box,
@@ -219,7 +219,7 @@ void gim_aabbset_bipartite_intersections(GIM_AABB_SET * aabbset1, GIM_AABB_SET *
 
 ///Function for create Box collision result set
 
-#define GIM_CREATE_BOXQUERY_LIST(dynarray) GIM_DYNARRAY_CREATE(GUINT,dynarray,G_ARRAY_GROW_SIZE)
+#define GIM_CREATE_BOXQUERY_LIST(dynarray) GIM_DYNARRAY_CREATE(GUINT32,dynarray,G_ARRAY_GROW_SIZE)
 
 //! Finds intersections between a box and a set. Return the colliding boxes of the set
 /*!
@@ -236,7 +236,7 @@ void gim_aabbset_box_collision(aabb3f *test_aabb, GIM_AABB_SET * aabbset, GDYNAM
 \param vorigin Origin point of ray.
 \param vdir Direction vector of ray.
 \param tmax Max distance param for ray.
-\param aabbset Set of boxes .Global bound is required.
+\param aabbset Set of boxes. Global bound is required.
 \param collided Array of GUINT elements, indices of boxes. Must be initialized before (Reserve size ~ 100)
 */
 void gim_aabbset_ray_collision(vec3f vorigin,vec3f vdir, GREAL tmax, GIM_AABB_SET * aabbset, GDYNAMIC_ARRAY * collided);
@@ -269,12 +269,12 @@ So the maximum size of a room should be about 3276x3276 . Its dimensions must li
 */
 #define GIM_CONVERT_VEC3F_GUINT_XZ(vx,vz,uint_key)\
 {\
-    GUINT _z = ((GUINT)(vz*ERROR_AABB))+32768;\
-    uint_key = ((GUINT)(vx*ERROR_AABB))+32768;\
+    GUINT32 _z = ((GUINT32)(vz*ERROR_AABB))+32768;\
+    uint_key = ((GUINT32)(vx*ERROR_AABB))+32768;\
     uint_key = (uint_key<<16) + _z;\
 }\
 
-//! Converts a vector coordinate to an integer for box sorting,rounding to the upper int
+//! Converts a vector coordinate to an integer for box sorting, rounding to the upper int
 /*!
 \param vx X component
 \param vz Z component
@@ -282,8 +282,8 @@ So the maximum size of a room should be about 3276x3276 . Its dimensions must li
 */
 #define GIM_CONVERT_VEC3F_GUINT_XZ_UPPER(vx,vz,uint_key)\
 {\
-    GUINT _z = ((GUINT)ceilf(vz*ERROR_AABB))+32768;\
-    uint_key = ((GUINT)ceilf(vx*ERROR_AABB))+32768;\
+    GUINT32 _z = ((GUINT32)ceilf(vz*ERROR_AABB))+32768;\
+    uint_key = ((GUINT32)ceilf(vx*ERROR_AABB))+32768;\
     uint_key = (uint_key<<16) + _z;\
 }\
 
@@ -298,8 +298,8 @@ So the maximum size of a room should be about 3276x3276 . Its dimensions must li
 {\
     GREAL _cx = CLAMP(vx,-MAX_AABB_SIZE,MAX_AABB_SIZE);\
     GREAL _cz = CLAMP(vz,-MAX_AABB_SIZE,MAX_AABB_SIZE);\
-    GUINT _z = ((GUINT)(_cz*ERROR_AABB))+32768;\
-    uint_key = ((GUINT)(_cx*ERROR_AABB))+32768;\
+    GUINT32 _z = ((GUINT32)(_cz*ERROR_AABB))+32768;\
+    uint_key = ((GUINT32)(_cx*ERROR_AABB))+32768;\
     uint_key = (uint_key<<16) + _z;\
 }\
 
@@ -313,8 +313,8 @@ So the maximum size of a room should be about 3276x3276 . Its dimensions must li
 {\
     GREAL _cx = CLAMP(vx,-MAX_AABB_SIZE,MAX_AABB_SIZE);\
     GREAL _cz = CLAMP(vz,-MAX_AABB_SIZE,MAX_AABB_SIZE);\
-    GUINT _z = ((GUINT)ceilf(_cz*ERROR_AABB))+32768;\
-    uint_key = ((GUINT)ceilf(_cx*ERROR_AABB))+32768;\
+    GUINT32 _z = ((GUINT32)ceilf(_cz*ERROR_AABB))+32768;\
+    uint_key = ((GUINT32)ceilf(_cx*ERROR_AABB))+32768;\
     uint_key = (uint_key<<16) + _z;\
 }\
 

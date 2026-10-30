@@ -22,9 +22,10 @@
 
 #ifndef _ODE_COMMON_H_
 #define _ODE_COMMON_H_
-#include <ode/config.h>
+
+#include <ode/odeconfig.h>
 #include <ode/error.h>
-#include <math.h>
+
 
 #ifdef __cplusplus
 extern "C" {
@@ -32,18 +33,6 @@ extern "C" {
 
 
 /* configuration stuff */
-
-/* the efficient alignment. most platforms align data structures to some
- * number of bytes, but this is not always the most efficient alignment.
- * for example, many x86 compilers align to 4 bytes, but on a pentium it
- * is important to align doubles to 8 byte boundaries (for speed), and
- * the 4 floats in a SIMD register to 16 byte boundaries. many other
- * platforms have similar behavior. setting a larger alignment can waste
- * a (very) small amount of memory. NOTE: this number must be a power of
- * two. this is set to 16 by default.
- */
-#define EFFICIENT_ALIGNMENT 16
-
 
 /* constants */
 
@@ -54,43 +43,13 @@ extern "C" {
 #ifndef M_PI
 #define M_PI REAL(3.1415926535897932384626433832795029)
 #endif
+#ifndef M_PI_2
+#define M_PI_2 REAL(1.5707963267948966192313216916398)
+#endif
 #ifndef M_SQRT1_2
 #define M_SQRT1_2 REAL(0.7071067811865475244008443621048490)
 #endif
 
-
-/* debugging:
- *   IASSERT  is an internal assertion, i.e. a consistency check. if it fails
- *            we want to know where.
- *   UASSERT  is a user assertion, i.e. if it fails a nice error message
- *            should be printed for the user.
- *   AASSERT  is an arguments assertion, i.e. if it fails "bad argument(s)"
- *            is printed.
- *   DEBUGMSG just prints out a message
- */
-
-#ifndef dNODEBUG
-#ifdef __GNUC__
-#define dIASSERT(a) if (!(a)) dDebug (d_ERR_IASSERT, \
-  "assertion \"" #a "\" failed in %s() [%s]",__FUNCTION__,__FILE__);
-#define dUASSERT(a,msg) if (!(a)) dDebug (d_ERR_UASSERT, \
-  msg " in %s()", __FUNCTION__);
-#define dDEBUGMSG(msg) dMessage (d_ERR_UASSERT,				\
-msg " in %s() File %s Line %d", __FUNCTION__, __FILE__,__LINE__);
-#else
-#define dIASSERT(a) if (!(a)) dDebug (d_ERR_IASSERT, \
-  "assertion \"" #a "\" failed in %s:%d",__FILE__,__LINE__);
-#define dUASSERT(a,msg) if (!(a)) dDebug (d_ERR_UASSERT, \
-  msg " (%s:%d)", __FILE__,__LINE__);
-#define dDEBUGMSG(msg) dMessage (d_ERR_UASSERT, \
-  msg " (%s:%d)", __FILE__,__LINE__);
-#endif
-#else
-#define dIASSERT(a) ;
-#define dUASSERT(a,msg) ;
-#define dDEBUGMSG(msg) ;
-#endif
-#define dAASSERT(a) dUASSERT(a,"Bad argument(s)")
 
 /* floating point data type, vector, matrix and quaternion types */
 
@@ -98,33 +57,229 @@ msg " in %s() File %s Line %d", __FUNCTION__, __FILE__,__LINE__);
 typedef float dReal;
 #ifdef dDOUBLE
 #error You can only #define dSINGLE or dDOUBLE, not both.
-#endif // dDOUBLE
+#endif /* dDOUBLE */
 #elif defined(dDOUBLE)
 typedef double dReal;
 #else
 #error You must #define dSINGLE or dDOUBLE
 #endif
 
+/* Detect if we've got both trimesh engines enabled. */
+#if dTRIMESH_ENABLED
+#if dTRIMESH_OPCODE && dTRIMESH_GIMPACT
+#error You can only #define dTRIMESH_OPCODE or dTRIMESH_GIMPACT, not both.
+#endif
+#endif /* dTRIMESH_ENABLED */
+
+/*
+ * Define a type for indices, either 16 or 32 bit, based on build option
+ * TODO: Currently GIMPACT only supports 32 bit indices.
+ */
+#if dTRIMESH_16BIT_INDICES
+#if dTRIMESH_GIMPACT
+typedef duint32 dTriIndex;
+#else /* dTRIMESH_GIMPACT */
+typedef duint16 dTriIndex;
+#endif /* dTRIMESH_GIMPACT */
+#else /* dTRIMESH_16BIT_INDICES */
+typedef duint32 dTriIndex;
+#endif /* dTRIMESH_16BIT_INDICES */
 
 /* round an integer up to a multiple of 4, except that 0 and 1 are unmodified
  * (used to compute matrix leading dimensions)
  */
-#define dPAD(a) (((a) > 1) ? ((((a)-1)|3)+1) : (a))
+#define dPAD(a) (((a) > 1) ? (((a) + 3) & (int)(~3)) : (a))
+
+typedef enum {
+    dSA__MIN,
+
+    dSA_X = dSA__MIN,
+    dSA_Y,
+    dSA_Z,
+
+    dSA__MAX,
+} dSpaceAxis;
+
+typedef enum {
+    dMD__MIN,
+
+    dMD_LINEAR = dMD__MIN,
+    dMD_ANGULAR,
+
+    dMD__MAX,
+} dMotionDynamics;
+
+typedef enum {
+    dDA__MIN,
+
+    dDA__L_MIN = dDA__MIN + dMD_LINEAR * dSA__MAX,
+
+    dDA_LX = dDA__L_MIN + dSA_X,
+    dDA_LY = dDA__L_MIN + dSA_Y,
+    dDA_LZ = dDA__L_MIN + dSA_Z,
+
+    dDA__L_MAX = dDA__L_MIN + dSA__MAX,
+
+    dDA__A_MIN = dDA__MIN + dMD_ANGULAR * dSA__MAX,
+
+    dDA_AX = dDA__A_MIN + dSA_X,
+    dDA_AY = dDA__A_MIN + dSA_Y,
+    dDA_AZ = dDA__A_MIN + dSA_Z,
+
+    dDA__A_MAX = dDA__A_MIN + dSA__MAX,
+
+    dDA__MAX = dDA__MIN + dMD__MAX * dSA__MAX,
+} dDynamicsAxis;
+
+typedef enum {
+    dV3E__MIN,
+
+    dV3E__AXES_MIN = dV3E__MIN,
+
+    dV3E_X = dV3E__AXES_MIN + dSA_X,
+    dV3E_Y = dV3E__AXES_MIN + dSA_Y,
+    dV3E_Z = dV3E__AXES_MIN + dSA_Z,
+
+    dV3E__AXES_MAX = dV3E__AXES_MIN + dSA__MAX,
+
+    dV3E_PAD = dV3E__AXES_MAX,
+
+    dV3E__MAX,
+
+    dV3E__AXES_COUNT = dV3E__AXES_MAX - dV3E__AXES_MIN,
+} dVec3Element;
+
+typedef enum {
+    dV4E__MIN,
+
+    dV4E_X = dV4E__MIN + dSA_X,
+    dV4E_Y = dV4E__MIN + dSA_Y,
+    dV4E_Z = dV4E__MIN + dSA_Z,
+    dV4E_O = dV4E__MIN + dSA__MAX,
+
+    dV4E__MAX,
+} dVec4Element;
+
+typedef enum {
+    dM3E__MIN,
+
+    dM3E__X_MIN = dM3E__MIN + dSA_X * dV3E__MAX,
+    
+    dM3E__X_AXES_MIN = dM3E__X_MIN + dV3E__AXES_MIN,
+
+    dM3E_XX = dM3E__X_MIN + dV3E_X,
+    dM3E_XY = dM3E__X_MIN + dV3E_Y,
+    dM3E_XZ = dM3E__X_MIN + dV3E_Z,
+
+    dM3E__X_AXES_MAX = dM3E__X_MIN + dV3E__AXES_MAX,
+
+    dM3E_XPAD = dM3E__X_MIN + dV3E_PAD,
+
+    dM3E__X_MAX = dM3E__X_MIN + dV3E__MAX,
+
+    dM3E__Y_MIN = dM3E__MIN + dSA_Y * dV3E__MAX,
+
+    dM3E__Y_AXES_MIN = dM3E__Y_MIN + dV3E__AXES_MIN,
+
+    dM3E_YX = dM3E__Y_MIN + dV3E_X,
+    dM3E_YY = dM3E__Y_MIN + dV3E_Y,
+    dM3E_YZ = dM3E__Y_MIN + dV3E_Z,
+
+    dM3E__Y_AXES_MAX = dM3E__Y_MIN + dV3E__AXES_MAX,
+
+    dM3E_YPAD = dM3E__Y_MIN + dV3E_PAD,
+
+    dM3E__Y_MAX = dM3E__Y_MIN + dV3E__MAX,
+
+    dM3E__Z_MIN = dM3E__MIN + dSA_Z * dV3E__MAX,
+
+    dM3E__Z_AXES_MIN = dM3E__Z_MIN + dV3E__AXES_MIN,
+
+    dM3E_ZX = dM3E__Z_MIN + dV3E_X,
+    dM3E_ZY = dM3E__Z_MIN + dV3E_Y,
+    dM3E_ZZ = dM3E__Z_MIN + dV3E_Z,
+
+    dM3E__Z_AXES_MAX = dM3E__Z_MIN + dV3E__AXES_MAX,
+
+    dM3E_ZPAD = dM3E__Z_MIN + dV3E_PAD,
+
+    dM3E__Z_MAX = dM3E__Z_MIN + dV3E__MAX,
+
+    dM3E__MAX = dM3E__MIN + dSA__MAX * dV3E__MAX,
+} dMat3Element;
+
+typedef enum {
+    dM4E__MIN,
+
+    dM4E__X_MIN = dM4E__MIN + dV4E_X * dV4E__MAX,
+
+    dM4E_XX = dM4E__X_MIN + dV4E_X,
+    dM4E_XY = dM4E__X_MIN + dV4E_Y,
+    dM4E_XZ = dM4E__X_MIN + dV4E_Z,
+    dM4E_XO = dM4E__X_MIN + dV4E_O,
+
+    dM4E__X_MAX = dM4E__X_MIN + dV4E__MAX,
+
+    dM4E__Y_MIN = dM4E__MIN + dV4E_Y * dV4E__MAX,
+
+    dM4E_YX = dM4E__Y_MIN + dV4E_X,
+    dM4E_YY = dM4E__Y_MIN + dV4E_Y,
+    dM4E_YZ = dM4E__Y_MIN + dV4E_Z,
+    dM4E_YO = dM4E__Y_MIN + dV4E_O,
+
+    dM4E__Y_MAX = dM4E__Y_MIN + dV4E__MAX,
+
+    dM4E__Z_MIN = dM4E__MIN + dV4E_Z * dV4E__MAX,
+
+    dM4E_ZX = dM4E__Z_MIN + dV4E_X,
+    dM4E_ZY = dM4E__Z_MIN + dV4E_Y,
+    dM4E_ZZ = dM4E__Z_MIN + dV4E_Z,
+    dM4E_ZO = dM4E__Z_MIN + dV4E_O,
+
+    dM4E__Z_MAX = dM4E__Z_MIN + dV4E__MAX,
+
+    dM4E__O_MIN = dM4E__MIN + dV4E_O * dV4E__MAX,
+
+    dM4E_OX = dM4E__O_MIN + dV4E_X,
+    dM4E_OY = dM4E__O_MIN + dV4E_Y,
+    dM4E_OZ = dM4E__O_MIN + dV4E_Z,
+    dM4E_OO = dM4E__O_MIN + dV4E_O,
+
+    dM4E__O_MAX = dM4E__O_MIN + dV4E__MAX,
+
+    dM4E__MAX = dM4E__MIN + dV4E__MAX * dV4E__MAX,
+} dMat4Element;
+
+typedef enum {
+    dQUE__MIN,
+
+    dQUE_R = dQUE__MIN,
+
+    dQUE__AXIS_MIN,
+
+    dQUE_I = dQUE__AXIS_MIN + dSA_X,
+    dQUE_J = dQUE__AXIS_MIN + dSA_Y,
+    dQUE_K = dQUE__AXIS_MIN + dSA_Z,
+
+    dQUE__AXIS_MAX = dQUE__AXIS_MIN + dSA__MAX,
+
+    dQUE__MAX = dQUE__AXIS_MAX,
+} dQuatElement;
 
 /* these types are mainly just used in headers */
-typedef dReal dVector3[4];
-typedef dReal dVector4[4];
-typedef dReal dMatrix3[4*3];
-typedef dReal dMatrix4[4*4];
-typedef dReal dMatrix6[8*6];
-typedef dReal dQuaternion[4];
+typedef dReal dVector3[dV3E__MAX];
+typedef dReal dVector4[dV4E__MAX];
+typedef dReal dMatrix3[dM3E__MAX];
+typedef dReal dMatrix4[dM4E__MAX];
+typedef dReal dMatrix6[(dMD__MAX * dV3E__MAX) * (dMD__MAX * dSA__MAX)];
+typedef dReal dQuaternion[dQUE__MAX];
 
 
 /* precision dependent scalar math functions */
 
 #if defined(dSINGLE)
 
-#define REAL(x) (x ## f)					/* form a constant */
+#define REAL(x) (x##f)					/* form a constant */
 #define dRecip(x) ((1.0f/(x)))				/* reciprocal */
 #define dSqrt(x) (sqrtf(x))			/* square root */
 #define dRecipSqrt(x) ((1.0f/sqrtf(x)))		/* reciprocal square root */
@@ -132,7 +287,13 @@ typedef dReal dQuaternion[4];
 #define dCos(x) (cosf(x))				/* cosine */
 #define dFabs(x) (fabsf(x))			/* absolute value */
 #define dAtan2(y,x) (atan2f(y,x))		/* arc tangent with 2 args */
+#define dAsin(x) (asinf(x))
+#define dAcos(x) (acosf(x))
 #define dFMod(a,b) (fmodf(a,b))		/* modulo */
+#define dFloor(x) floorf(x)			/* floor */
+#define dCeil(x) ceilf(x)			/* ceil */
+#define dCopySign(a,b) _ode_copysignf(a, b) /* copy value sign */
+#define dNextAfter(x, y) _ode_nextafterf(x, y) /* next value after */
 
 #ifdef HAVE___ISNANF
 #define dIsNan(x) (__isnanf(x))
@@ -153,8 +314,6 @@ typedef dReal dQuaternion[4];
 #define dIsNan(x) (_isnan(x))
 #endif
 
-#define dCopySign(a,b) ((dReal)copysignf(a,b))
-
 #elif defined(dDOUBLE)
 
 #define REAL(x) (x)
@@ -165,7 +324,14 @@ typedef dReal dQuaternion[4];
 #define dCos(x) cos(x)
 #define dFabs(x) fabs(x)
 #define dAtan2(y,x) atan2((y),(x))
+#define dAsin(x) asin(x)
+#define dAcos(x) acos(x)
 #define dFMod(a,b) (fmod((a),(b)))
+#define dFloor(x) floor(x)
+#define dCeil(x) ceil(x)
+#define dCopySign(a,b) _ode_copysign(a, b)
+#define dNextAfter(x, y) _ode_nextafter(x, y)
+
 #ifdef HAVE___ISNAN
 #define dIsNan(x) (__isnan(x))
 #elif defined(HAVE__ISNAN)
@@ -176,55 +342,23 @@ typedef dReal dQuaternion[4];
 #define dIsNan(x) (_isnan(x))
 #endif
 
-#define dCopySign(a,b) (copysign((a),(b)))
-
 #else
 #error You must #define dSINGLE or dDOUBLE
 #endif
 
-
-/* utility */
-
-
-/* round something up to be a multiple of the EFFICIENT_ALIGNMENT */
-
-#define dEFFICIENT_SIZE(x) ((((x)-1)|(EFFICIENT_ALIGNMENT-1))+1)
-
-
-/* alloca aligned to the EFFICIENT_ALIGNMENT. note that this can waste
- * up to 15 bytes per allocation, depending on what alloca() returns.
- */
-
-#define dALLOCA16(n) \
-  ((char*)dEFFICIENT_SIZE(((size_t)(alloca((n)+(EFFICIENT_ALIGNMENT-1))))))
-
-
-// Use the error-checking memory allocation system.  Because this system uses heap
-//  (malloc) instead of stack (alloca), it is slower.  However, it allows you to
-//  simulate larger scenes, as well as handle out-of-memory errors in a somewhat
-//  graceful manner
-
-// #define dUSE_MALLOC_FOR_ALLOCA
-
-#ifdef dUSE_MALLOC_FOR_ALLOCA
-enum {
-  d_MEMORY_OK = 0,		/* no memory errors */
-  d_MEMORY_OUT_OF_MEMORY	/* malloc failed due to out of memory error */
-};
-
-#endif
-
+ODE_PURE_INLINE dReal dMin(dReal x, dReal y) { return x <= y ? x : y; }
+ODE_PURE_INLINE dReal dMax(dReal x, dReal y) { return x <= y ? y : x; }
 
 
 /* internal object types (all prefixed with `dx') */
 
-struct dxWorld;		/* dynamics world */
-struct dxSpace;		/* collision space */
-struct dxBody;		/* rigid body (dynamics object) */
-struct dxGeom;		/* geometry (collision object) */
-struct dxJoint;
-struct dxJointNode;
-struct dxJointGroup;
+struct dxWorld;     /* dynamics world */
+struct dxSpace;     /* collision space */
+struct dxBody;      /* rigid body (dynamics object) */
+struct dxGeom;      /* geometry (collision object) */
+struct dxJoint;     /* joint */
+struct dxJointGroup;/* joint group */
+
 
 typedef struct dxWorld *dWorldID;
 typedef struct dxSpace *dSpaceID;
@@ -246,7 +380,7 @@ enum {
 
 /* joint type numbers */
 
-enum {
+typedef enum {
   dJointTypeNone = 0,		/* or "unknown" */
   dJointTypeBall,
   dJointTypeHinge,
@@ -259,8 +393,13 @@ enum {
   dJointTypeAMotor,
   dJointTypeLMotor,
   dJointTypePlane2D,
-  dJointTypePR
-};
+  dJointTypePR,
+  dJointTypePU,
+  dJointTypePiston,
+  dJointTypeDBall,
+  dJointTypeDHinge,
+  dJointTypeTransmission,
+} dJointType;
 
 
 /* an alternative way of setting joint parameters, using joint parameter
@@ -301,6 +440,8 @@ enum {
   dParamLoStop = start, \
   dParamHiStop, \
   dParamVel, \
+  dParamLoVel, \
+  dParamHiVel, \
   dParamFMax, \
   dParamFudgeFactor, \
   dParamBounce, \
@@ -309,13 +450,25 @@ enum {
   dParamStopCFM, \
   /* parameters for suspension */ \
   dParamSuspensionERP, \
-  dParamSuspensionCFM,
+  dParamSuspensionCFM, \
+  dParamERP, \
 
+  /*
+   * \enum  D_ALL_PARAM_NAMES_X
+   *
+   * \var dParamGroup This is the starting value of the different group
+   *                  (i.e. dParamGroup1, dParamGroup2, dParamGroup3)
+   *                  It also helps in the use of parameter
+   *                  (dParamGroup2 | dParamFMax) == dParamFMax2
+   */
 #define D_ALL_PARAM_NAMES_X(start,x) \
+  dParamGroup ## x = start, \
   /* parameters for limits and motors */ \
   dParamLoStop ## x = start, \
   dParamHiStop ## x, \
   dParamVel ## x, \
+  dParamLoVel ## x, \
+  dParamHiVel ## x, \
   dParamFMax ## x, \
   dParamFudgeFactor ## x, \
   dParamBounce ## x, \
@@ -324,10 +477,13 @@ enum {
   dParamStopCFM ## x, \
   /* parameters for suspension */ \
   dParamSuspensionERP ## x, \
-  dParamSuspensionCFM ## x,
+  dParamSuspensionCFM ## x, \
+  dParamERP ## x,
 
 enum {
   D_ALL_PARAM_NAMES(0)
+  dParamsInGroup,     /* < Number of parameter in a group */
+  D_ALL_PARAM_NAMES_X(0x000,1)
   D_ALL_PARAM_NAMES_X(0x100,2)
   D_ALL_PARAM_NAMES_X(0x200,3)
 
@@ -340,9 +496,17 @@ enum {
 
 /* angular motor mode numbers */
 
-enum{
+enum {
   dAMotorUser = 0,
   dAMotorEuler = 1
+};
+
+/* transmission joint mode numbers */
+
+enum {
+  dTransmissionParallelAxes = 0,
+  dTransmissionIntersectingAxes = 1,
+  dTransmissionChainDrive = 2
 };
 
 
@@ -366,6 +530,36 @@ typedef struct dJointFeedback {
 void dGeomMoved (dGeomID);
 dGeomID dGeomGetBodyNext (dGeomID);
 
+/**
+ * dGetConfiguration returns the specific ODE build configuration as
+ * a string of tokens. The string can be parsed in a similar way to
+ * the OpenGL extension mechanism, the naming convention should be
+ * familiar too. The following extensions are reported:
+ *
+ * ODE
+ * ODE_single_precision
+ * ODE_double_precision
+ * ODE_EXT_no_debug
+ * ODE_EXT_trimesh
+ * ODE_EXT_opcode
+ * ODE_EXT_gimpact
+ * ODE_OPC_16bit_indices
+ * ODE_OPC_new_collider
+ * ODE_EXT_mt_collisions
+ * ODE_EXT_threading
+ * ODE_THR_builtin_impl
+ */
+ODE_API const char* dGetConfiguration (void);
+
+/**
+ * Helper to check for a token in the ODE configuration string.
+ * Caution, this function is case sensitive.
+ *
+ * @param token A configuration token, see dGetConfiguration for details
+ *
+ * @return 1 if exact token is present, 0 if not present
+ */
+ODE_API int dCheckConfiguration( const char* token );
 
 #ifdef __cplusplus
 }

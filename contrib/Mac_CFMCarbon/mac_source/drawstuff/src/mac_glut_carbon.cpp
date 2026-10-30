@@ -22,7 +22,7 @@
 
 // main window and event handling for Mac CFM Carbon
 
-#include <ode/config.h>
+#include <ode/odeconfig.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
@@ -56,6 +56,7 @@ extern "C" void dsError (char *msg, ...)
   va_list ap;
   va_start (ap,msg);
   printMessage ("Error",msg,ap);
+  va_end (ap);
   exit (1);
 }
 
@@ -65,6 +66,7 @@ extern "C" void dsDebug (char *msg, ...)
   va_list ap;
   va_start (ap,msg);
   printMessage ("INTERNAL ERROR",msg,ap);
+  va_end (ap);
   // *((char *)0) = 0;	 ... commit SEGVicide ?
   abort();
 }
@@ -74,6 +76,7 @@ extern "C" void dsPrint (char *msg, ...)
   va_list ap;
   va_start (ap,msg);
   vprintf (msg,ap);
+  va_end (ap);
 }
 
 //***************************************************************************

@@ -173,7 +173,7 @@ using namespace Opcode;
 
 #define SEGMENT_PRIM(prim_index, flag)														\
 	/* Request vertices from the app */														\
-	VertexPointers VP;	mIMesh->GetTriangle(VP, prim_index);								\
+	VertexPointers VP;	ConversionArea VC;	mIMesh->GetTriangle(VP, prim_index, VC);		\
 																							\
 	/* Perform ray-tri overlap test and return */											\
 	if(RayTriOverlap(*VP.Vertex[0], *VP.Vertex[1], *VP.Vertex[2]))							\
@@ -188,7 +188,7 @@ using namespace Opcode;
 
 #define RAY_PRIM(prim_index, flag)															\
 	/* Request vertices from the app */														\
-	VertexPointers VP;	mIMesh->GetTriangle(VP, prim_index);								\
+	VertexPointers VP;	ConversionArea VC;	mIMesh->GetTriangle(VP, prim_index, VC);		\
 																							\
 	/* Perform ray-tri overlap test and return */											\
 	if(RayTriOverlap(*VP.Vertex[0], *VP.Vertex[1], *VP.Vertex[2]))							\
@@ -203,18 +203,19 @@ using namespace Opcode;
  */
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 RayCollider::RayCollider() :
-	mNbRayBVTests		(0),
-	mNbRayPrimTests		(0),
-	mNbIntersections	(0),
-	mCulling			(true),
 #ifdef OPC_RAYHIT_CALLBACK
 	mHitCallback		(null),
 	mUserData			(0),
 #else
-	mClosestHit			(false),
 	mStabbedFaces		(null),
+	mClosestHit			(false),
 #endif
-	mMaxDist			(MAX_FLOAT)
+	mNbRayBVTests		(0),
+	mNbRayPrimTests		(0),
+	mNbIntersections	(0),
+	mMaxDist			(MAX_FLOAT),
+	mCulling			(true)
+
 {
 }
 
@@ -271,7 +272,7 @@ bool RayCollider::Collide(const Ray& world_ray, const Model& model, const Matrix
 	{
 		if(model.IsQuantized())
 		{
-			const AABBQuantizedNoLeafTree* Tree = (const AABBQuantizedNoLeafTree*)model.GetTree();
+			const AABBQuantizedNoLeafTree* Tree = static_cast<const AABBQuantizedNoLeafTree *>(model.GetTree());
 
 			// Setup dequantization coeffs
 			mCenterCoeff	= Tree->mCenterCoeff;
@@ -283,7 +284,7 @@ bool RayCollider::Collide(const Ray& world_ray, const Model& model, const Matrix
 		}
 		else
 		{
-			const AABBNoLeafTree* Tree = (const AABBNoLeafTree*)model.GetTree();
+			const AABBNoLeafTree* Tree = static_cast<const AABBNoLeafTree *>(model.GetTree());
 
 			// Perform stabbing query
 			if(IR(mMaxDist)!=IEEE_MAX_FLOAT)	_SegmentStab(Tree->GetNodes());
@@ -294,7 +295,7 @@ bool RayCollider::Collide(const Ray& world_ray, const Model& model, const Matrix
 	{
 		if(model.IsQuantized())
 		{
-			const AABBQuantizedTree* Tree = (const AABBQuantizedTree*)model.GetTree();
+			const AABBQuantizedTree* Tree = static_cast<const AABBQuantizedTree *>(model.GetTree());
 
 			// Setup dequantization coeffs
 			mCenterCoeff	= Tree->mCenterCoeff;
@@ -306,7 +307,7 @@ bool RayCollider::Collide(const Ray& world_ray, const Model& model, const Matrix
 		}
 		else
 		{
-			const AABBCollisionTree* Tree = (const AABBCollisionTree*)model.GetTree();
+			const AABBCollisionTree* Tree = static_cast<const AABBCollisionTree *>(model.GetTree());
 
 			// Perform stabbing query
 			if(IR(mMaxDist)!=IEEE_MAX_FLOAT)	_SegmentStab(Tree->GetNodes());
@@ -315,7 +316,7 @@ bool RayCollider::Collide(const Ray& world_ray, const Model& model, const Matrix
 	}
 
 	// Update cache if needed
-	UPDATE_CACHE
+	UPDATE_CACHE;
 	return true;
 }
 
@@ -388,7 +389,8 @@ BOOL RayCollider::InitQuery(const Ray& world_ray, const Matrix4x4* world, udword
 		{
 			// Request vertices from the app
 			VertexPointers VP;
-			mIMesh->GetTriangle(VP, *face_id);
+			ConversionArea VC;
+			mIMesh->GetTriangle(VP, *face_id, VC);
 			// Perform ray-cached tri overlap test
 			if(RayTriOverlap(*VP.Vertex[0], *VP.Vertex[1], *VP.Vertex[2]))
 			{

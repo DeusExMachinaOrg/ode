@@ -7,27 +7,50 @@
  * CONFIGURATON SETTINGS - you can change these, and then rebuild
  *   ODE to modify the behavior of the library.
  *
- *   dSINGLE/dDOUBLE   - force ODE to use single-precision (float)
- *                       or double-precision (double) for numbers.
- *                       Only one should be defined.
- *
  *   dTRIMESH_ENABLED  - enable/disable trimesh support
  *   dTRIMESH_OPCODE   - use the OPCODE trimesh engine
  *   dTRIMESH_GIMPACT  - use the GIMPACT trimesh engine
+ *                       Only one trimesh engine should be enabled.
  *
- *   dUSE_MALLOC_FOR_ALLOCA (experimental)- 
- *                       Use malloc() instead of alloca(). Slower, 
- *                       but allows for larger systems and more 
- *                       graceful out-of-memory handling.
+ *   dTRIMESH_16BIT_INDICES (todo: opcode only)
+ *                       Setup the trimesh engine to use 16 bit
+ *                       triangle indices. The default is to use
+ *                       32 bit indices. Use the dTriIndex type to
+ *                       detect the correct index size.
+ *
+ *   dTRIMESH_OPCODE_USE_NEWOLD_TRIMESH_TRIMESH_COLLIDER
+ *                       Use old implementation of trimesh-trimesh collider
+ *                       (for backward compatibility only)
+ *
+ *   dOU_ENABLED       
+ *   dATOMICS_ENABLED
+ *   dTLS_ENABLED
+ *                       Use generic features of OU library, atomic API
+ *                       and TLS API respectively.
+ *                       Generic features and atomic API are always enabled, 
+ *                       unless threading interface support is disabled.
+ *                       Using TLS for global variables allows calling ODE 
+ *                       collision detection functions from multiple threads.
+ *
+ *   dBUILTIN_THREADING_IMPL_ENABLED
+ *                       Include built-in multithreaded threading 
+ *                       implementation (still must be created and assigned
+ *                       to be used).
+ *
  ******************************************************************/
-
-#define dSINGLE
-/* #define dDOUBLE */
 
 #define dTRIMESH_ENABLED 1
 #define dTRIMESH_OPCODE 1
+#define dTRIMESH_16BIT_INDICES 0
 
-/* #define dUSE_MALLOC_FOR_ALLOCA */
+#define dTRIMESH_OPCODE_USE_OLD_TRIMESH_TRIMESH_COLLIDER 0
+
+/* #define dOU_ENABLED 1 */
+/* #define dATOMICS_ENABLED 1 */
+/* #define dTLS_ENABLED 1 */
+
+/* #define dTHREADING_INTF_DISABLED 1 */
+/* #define dBUILTIN_THREADING_IMPL_ENABLED 1 */
 
 
 /******************************************************************
@@ -44,12 +67,14 @@
   #define ODE_PLATFORM_PSP
 #elif defined(SN_TARGET_PS3)
   #define ODE_PLATFORM_PS3
-#elif defined(_MSC_VER) || defined(__CYGWIN32__) || defined(__MINGW32__)
+#elif defined(_MSC_VER) || defined(__CYGWIN__) || defined(__MINGW32__)
   #define ODE_PLATFORM_WINDOWS
 #elif defined(__linux__)
   #define ODE_PLATFORM_LINUX
 #elif defined(__APPLE__) && defined(__MACH__)
   #define ODE_PLATFORM_OSX
+#elif defined(__FreeBSD__)
+  #define ODE_PLATFORM_FREEBSD
 #else
   #error "Need some help identifying the platform!"
 #endif
@@ -59,7 +84,7 @@
   #define WIN32
 #endif
 
-#if defined(__CYGWIN32__) || defined(__MINGW32__)
+#if defined(__CYGWIN__) || defined(__MINGW32__)
   #define CYGWIN
 #endif
 
@@ -67,30 +92,7 @@
   #define macintosh
 #endif
 
-
-/* Define a DLL export symbol for those platforms that need it */
-#if defined(ODE_PLATFORM_WINDOWS)
-  #if defined(ODE_DLL)
-    #define ODE_API __declspec(dllexport)
-  #elif !defined(ODE_LIB)
-    #define ODE_DLL_API __declspec(dllimport)
-  #endif
-#endif
-
-#if !defined(ODE_API)
-  #define ODE_API
-#endif
-
-
-/* Pull in the standard headers */
-#include <stdio.h>
-#include <stdlib.h>
-#include <stdarg.h>
-#include <math.h>
-#include <string.h>
-#include <float.h>
-
-#if !defined(ODE_PLATFORM_PS3)
+#if !defined(ODE_PLATFORM_OSX) && !defined(ODE_PLATFORM_PS3)
   #include <malloc.h>
 #endif
 
@@ -99,70 +101,15 @@
 #endif
 
 
-/* Visual C does not define these functions */
-#if defined(_MSC_VER)
-  #define copysignf _copysign
-  #define copysign _copysign
+/* Basic OU functionality is required if either atomic API or TLS support
+ * is enabled. */
+#if (dATOMICS_ENABLED || dTLS_ENABLED) && !dOU_ENABLED
+#undef dOU_ENABLED
+#define dOU_ENABLED 1
 #endif
 
 
-/* Define a value for infinity */
-#if defined(HUGE_VALF)
-	#define ODE_INFINITY4 HUGE_VALF
-	#define ODE_INFINITY8 HUGE_VAL
-#elif defined(FLT_MAX)
-	#define ODE_INFINITY4 FLT_MAX
-	#define ODE_INFINITY8 DBL_MAX
-#else
-	static union { unsigned char __c[4]; float  __f; }  __ode_huge_valf = {{0,0,0x80,0x7f}};
-	static union { unsigned char __c[8]; double __d; }  __ode_huge_val  = {{0,0,0,0,0,0,0xf0,0x7f}};
-	#define ODE_INFINITY4 (__ode_huge_valf.__f)
-	#define ODE_INFINITY8 (__ode_huge_val.__d)
-#endif
+#include "typedefs.h"
 
-#ifdef dSINGLE
-	#define dInfinity ODE_INFINITY4
-	#define dEpsilon  FLT_EPSILON
-#else
-	#define dInfinity ODE_INFINITY8
-	#define dEpsilon  DBL_EPSILON
-#endif
-
-
-/* Well-defined common data types...need to define for 64 bit systems */
-#if defined(_M_IA64) || defined(__ia64__) || defined(_M_AMD64) || defined(__x86_64__)
-  #define X86_64_SYSTEM   1
-  typedef int             int32;
-  typedef unsigned int    uint32;
-  typedef short           int16;
-  typedef unsigned short  uint16;
-  typedef char            int8;
-  typedef unsigned char   uint8;
-#else
-  typedef int             int32;
-  typedef unsigned int    uint32;
-  typedef short           int16;
-  typedef unsigned short  uint16;
-  typedef char            int8;
-  typedef unsigned char   uint8;
-#endif
-
-/* An integer type that can be safely cast to a pointer. This definition
- * should be safe even on 64-bit systems */
-typedef size_t intP;
-
-
-/* The efficient alignment. most platforms align data structures to some
- * number of bytes, but this is not always the most efficient alignment.
- * for example, many x86 compilers align to 4 bytes, but on a pentium it is
- * important to align doubles to 8 byte boundaries (for speed), and the 4
- * floats in a SIMD register to 16 byte boundaries. many other platforms have
- * similar behavior. setting a larger alignment can waste a (very) small
- * amount of memory. NOTE: this number must be a power of two. */
-#define EFFICIENT_ALIGNMENT 16
-
-
-/* Define this if your system supports anonymous memory maps (linux does) */
-#define MMAP_ANONYMOUS
 
 #endif

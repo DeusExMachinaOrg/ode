@@ -23,9 +23,12 @@
 #if defined(WIN32) || defined(__CYGWIN__)// this prevents warnings when dependencies built
 #include <windows.h>
 #endif
-#include <ode/config.h>
+#include <process.h>
+#include <ode/odeconfig.h>
 #include <GL/gl.h>
 
+#include "config.h"
+#include "common.h"
 #include "resource.h"
 #include "internal.h"
 
@@ -40,7 +43,7 @@ static HWND main_window = 0;
 //***************************************************************************
 // error and message handling
 
-static void errorBox (char *title, char *msg, va_list ap)
+static void errorBox (const char *title, const char *msg, va_list ap)
 {
   char s[1000];
   vsprintf (s,msg,ap);
@@ -48,39 +51,43 @@ static void errorBox (char *title, char *msg, va_list ap)
 }
 
 
-static void dsWarning (char *msg, ...)
+static void dsWarning (const char *msg, ...)
 {
   va_list ap;
   va_start (ap,msg);
   errorBox ("Warning",msg,ap);
+  va_end (ap);
 }
 
 
-extern "C" void dsError (char *msg, ...)
+extern "C" void dsError (const char *msg, ...)
 {
   va_list ap;
   va_start (ap,msg);
   errorBox ("Error",msg,ap);
+  va_end (ap);
   exit (1);
 }
 
 
-extern "C" void dsDebug (char *msg, ...)
+extern "C" void dsDebug (const char *msg, ...)
 {
   va_list ap;
   va_start (ap,msg);
   errorBox ("INTERNAL ERROR",msg,ap);
+  va_end (ap);
   // *((char *)0) = 0;	 ... commit SEGVicide ?
   abort();
   exit (1);	  // should never get here, but just in case...
 }
 
 
-extern "C" void dsPrint (char *msg, ...)
+extern "C" void dsPrint (const char *msg, ...)
 {
   va_list ap;
   va_start (ap,msg);
   vprintf (msg,ap);
+  va_end (ap);
 }
 
 //***************************************************************************
@@ -115,7 +122,7 @@ static void setupRendererGlobals()
 }
 
 
-static DWORD WINAPI renderingThread (LPVOID lpParam)
+static unsigned CALLBACK renderingThread (LPVOID lpParam)
 {
   // create openGL context and make it current
   HGLRC glc = wglCreateContext (renderer_dc);
@@ -287,10 +294,10 @@ static LRESULT CALLBACK mainWndProc (HWND hWnd, UINT msg, WPARAM wParam,
     }
     break;
 
-  case WM_CLOSE:
+  case WM_CLOSE:    
     PostQuitMessage (0);
     break;
-
+    
   default:
     return (DefWindowProc (hWnd, msg, wParam, lParam));
   }
@@ -323,8 +330,8 @@ static void drawStuffStartup()
     ghInstance = GetModuleHandleA (NULL);
   gnCmdShow = SW_SHOWNORMAL;		// @@@ fix this later
 
-  // redirect standard I/O to a new console (except on cygwin)
-#ifndef __CYGWIN__
+  // redirect standard I/O to a new console (except on cygwin and mingw)
+#if !defined(__CYGWIN__) && !defined(__MINGW32__)
   FreeConsole();
   if (AllocConsole()==0) dsError ("AllocConsole() failed");
   if (freopen ("CONIN$","rt",stdin)==0) dsError ("could not open stdin");
@@ -424,14 +431,14 @@ void dsPlatformSimLoop (int window_width, int window_height,
   renderer_height = window_height;
   renderer_fn = fn;
 
-  DWORD threadId, thirdParam = 0;
+  unsigned threadId;
   HANDLE hThread;
 
-  hThread = CreateThread(
+  hThread = (HANDLE)_beginthreadex(
 	NULL,			     // no security attributes
 	0,			     // use default stack size
-	renderingThread,	     // thread function
-	&thirdParam,		     // argument to thread function
+	&renderingThread,	     // thread function
+	NULL,		     // argument to thread function
 	0,			     // use default creation flags
 	&threadId);		     // returns the thread identifier
 
@@ -524,4 +531,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
 }
 
 */
+
+
 

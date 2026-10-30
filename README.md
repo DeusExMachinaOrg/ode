@@ -1,5 +1,10 @@
-The Open Dynamics Engine (ODE), Copyright (C) 2001-2006 Russell L. Smith.
--------------------------------------------------------------------------
+The Open Dynamics Engine (ODE)
+==============================
+
+![ODE logo](http://bitbucket.org/odedevs/ode/raw/default/web/ODElogo.png)
+
+Copyright (C) 2001-2007 Russell L. Smith.
+
 
 ODE is a free, industrial quality library for simulating articulated
 rigid body dynamics - for example ground vehicles, legged creatures,
@@ -9,24 +14,21 @@ and built-in collision detection.
 
 This library is free software; you can redistribute it and/or
 modify it under the terms of EITHER:
-  (1) The GNU Lesser General Public License as published by the Free
-      Software Foundation; either version 2.1 of the License, or (at
-      your option) any later version. The text of the GNU Lesser
-      General Public License is included with this library in the
-      file LICENSE.TXT.
-  (2) The BSD-style license that is included with this library in
-      the file LICENSE-BSD.TXT.
 
-This library is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the files
-LICENSE.TXT and LICENSE-BSD.TXT for more details.
+ * The GNU Lesser General Public License version 2.1 or any later.
 
- * Installation instructions are in the INSTALL file
+ * The BSD-style License.
 
- * The ODE web pages are at http://ode.org/
+See the [COPYING](http://bitbucket.org/odedevs/ode/raw/default/COPYING) file for more details.
 
- * An online manual is at http://opende.sf.net/wiki/index.php/Manual
+ * Installation instructions are in the [INSTALL.txt](http://bitbucket.org/odedevs/ode/raw/default/INSTALL.txt) file.
+
+ * The ODE web pages are at [ode.org](http://www.ode.org/).
+
+ * An online manual is at [the Wiki](http://ode-wiki.org/wiki/index.php?title=Manual).
 
  * API documentation is in the file ode/docs/index.html, or you
-   can view it on the web at http://opende.sf.net/docs/index.html
+   can view it on the web at [opende.sf.net/docs/index.html](http://opende.sf.net/docs/index.html).
+
+ * Coding style requirements can be found in the [CSR.txt](http://bitbucket.org/odedevs/ode/raw/default/CSR.txt) file.
+

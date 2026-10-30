@@ -25,9 +25,15 @@
 
 #include <ode/common.h>
 
+struct dxStepperProcessingCallContext;
 
-void dxQuickStepper (dxWorld *world, dxBody * const *body, int nb,
-		     dxJoint * const *_joint, int nj, dReal stepsize);
+
+sizeint dxEstimateQuickStepMemoryRequirements(
+    dxBody * const *body, unsigned int nb, dxJoint * const *_joint, unsigned int _nj);
+unsigned dxEstimateQuickStepMaxCallCount(
+    unsigned activeThreadCount, unsigned steppingAllowedThreadCount, unsigned lcpAllowedThreadCount);
+
+void dxQuickStepIsland(const dxStepperProcessingCallContext *callContext);
 
 
 #endif

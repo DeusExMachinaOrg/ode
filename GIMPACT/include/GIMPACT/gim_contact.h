@@ -2,7 +2,7 @@
 #define GIM_CONTACT_H_INCLUDED
 
 /*! \file gim_contact.h
-\author Francisco León
+\author Francisco Leï¿½n
 */
 /*
 -----------------------------------------------------------------------------
@@ -39,9 +39,9 @@ email: projectileman@yahoo.com
 \brief
 Functions for managing and sorting contacts resulting from a collision query.
 <ul>
-<li> Contact lists must be create by calling \ref GIM_CREATE_CONTACT_LIST
+<li> Contact lists must be created by calling \ref GIM_CREATE_CONTACT_LIST
 <li> After querys, contact lists must be destroy by calling \ref GIM_DYNARRAY_DESTROY
-<li> Contacts can be merge for avoid duplicate results by calling \ref gim_merge_contacts
+<li> Contacts can be merged to avoid duplicate results by calling \ref gim_merge_contacts
 </ul>
 
 */
@@ -54,8 +54,8 @@ struct GIM_CONTACT
     GREAL m_depth;//Positive value indicates interpenetration
     void * m_handle1;
     void * m_handle2;
-    GUINT m_feature1;//Face number
-    GUINT m_feature2;//Face number
+    GUINT32 m_feature1;//Face number
+    GUINT32 m_feature2;//Face number
 };
 //typedef struct _GIM_CONTACT GIM_CONTACT;
 
@@ -63,9 +63,9 @@ struct GIM_CONTACT
 
 #define GIM_CALC_KEY_CONTACT(pos,hash)\
 {\
-	GINT _coords[] = {(GINT)(pos[0]*1000.0f+1.0f),(GINT)(pos[1]*1333.0f),(GINT)(pos[2]*2133.0f+3.0f)};\
-	GUINT _hash=0;\
-	GUINT *_uitmp = (GUINT *)(&_coords[0]);\
+	GINT32 _coords[] = {(GINT32)(pos[0]*1000.0f+1.0f),(GINT32)(pos[1]*1333.0f),(GINT32)(pos[2]*2133.0f+3.0f)};\
+	GUINT32 _hash=0;\
+	GUINT32 *_uitmp = (GUINT32 *)(&_coords[0]);\
 	_hash = *_uitmp;\
 	_uitmp++;\
 	_hash += (*_uitmp)<<4;\

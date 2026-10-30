@@ -20,502 +20,405 @@
  *                                                                       *
  *************************************************************************/
 
-// TriMesh code by Erwin de Vries.
+// TriMesh storage classes refactoring and face angle computation code by Oleh Derevenko (C) 2016-2017
 
 #include <ode/collision.h>
-#include <ode/matrix.h>
 #include <ode/rotation.h>
-#include <ode/odemath.h>
-#include "collision_util.h"
-#define TRIMESH_INTERNAL
-#include "collision_trimesh_internal.h"
+#include "config.h"
+#include "matrix.h"
+#include "odemath.h"
+#include "util.h"
+
 
 #if dTRIMESH_ENABLED && dTRIMESH_GIMPACT
 
-void dxTriMeshData::Preprocess()
+#include "collision_util.h"
+#include "collision_trimesh_gimpact.h"
+#include "collision_trimesh_internal_impl.h"
+
+
+//////////////////////////////////////////////////////////////////////////
+// dxTriMeshData
+
+bool dxTriMeshData::preprocessData(bool /*buildUseFlags*//*=false*/, FaceAngleStorageMethod faceAndgesRequirement/*=ASM__INVALID*/)
 {
-	// If this mesh has already been preprocessed, exit
-//	if (UseFlags)
-//		return;
-//
-//	udword numTris = Mesh.GetNbTriangles();
-//	udword numEdges = numTris * 3;
-//
-//	UseFlags = new uint8[numTris];
-//	memset(UseFlags, 0, sizeof(uint8) * numTris);
-//
-//	EdgeRecord* records = new EdgeRecord[numEdges];
-//
-//	// Make a list of every edge in the mesh
-//	const IndexedTriangle* tris = Mesh.GetTris();
-//    for (unsigned int i = 0; i < numTris; i++)
-//	{
-//		SetupEdge(&records[i*3],   0, i, tris->mVRef);
-//		SetupEdge(&records[i*3+1], 1, i, tris->mVRef);
-//		SetupEdge(&records[i*3+2], 2, i, tris->mVRef);
-//
-//		tris = (const IndexedTriangle*)(((uint8*)tris) + Mesh.GetTriStride());
-//	}
-//
-//	// Sort the edges, so the ones sharing the same verts are beside each other
-//	qsort(records, numEdges, sizeof(EdgeRecord), EdgeCompare);
-//
-//	// Go through the sorted list of edges and flag all the edges and vertices that we need to use
-//	for (unsigned int i = 0; i < numEdges; i++)
-//	{
-//		EdgeRecord* rec1 = &records[i];
-//		EdgeRecord* rec2 = 0;
-//		if (i < numEdges - 1)
-//			rec2 = &records[i+1];
-//
-//		if (rec2 &&
-//			rec1->VertIdx1 == rec2->VertIdx1 &&
-//			rec1->VertIdx2 == rec2->VertIdx2)
-//		{
-//			VertexPointers vp;
-//			Mesh.GetTriangle(vp, rec1->TriIdx);
-//
-//			// Get the normal of the first triangle
-//			Point triNorm = (*vp.Vertex[2] - *vp.Vertex[1]) ^ (*vp.Vertex[0] - *vp.Vertex[1]);
-//			triNorm.Normalize();
-//
-//			// Get the vert opposite this edge in the first triangle
-//			Point oppositeVert1 = GetOppositeVert(rec1, vp.Vertex);
-//
-//			// Get the vert opposite this edge in the second triangle
-//			Mesh.GetTriangle(vp, rec2->TriIdx);
-//			Point oppositeVert2 = GetOppositeVert(rec2, vp.Vertex);
-//
-//			float dot = triNorm.Dot((oppositeVert2 - oppositeVert1).Normalize());
-//
-//			// We let the dot threshold for concavity get slightly negative to allow for rounding errors
-//			static const float kConcaveThresh = -0.000001f;
-//
-//			// This is a concave edge, leave it for the next pass
-//			if (dot >= kConcaveThresh)
-//				rec1->Concave = true;
-//			// If this is a convex edge, mark its vertices and edge as used
-//			else
-//				UseFlags[rec1->TriIdx] |= rec1->Vert1Flags | rec1->Vert2Flags | rec1->EdgeFlags;
-//
-//			// Skip the second edge
-//			i++;
-//		}
-//		// This is a boundary edge
-//		else
-//		{
-//			UseFlags[rec1->TriIdx] |= rec1->Vert1Flags | rec1->Vert2Flags | rec1->EdgeFlags;
-//		}
-//	}
-//
-//	// Go through the list once more, and take any edge we marked as concave and
-//	// clear it's vertices flags in any triangles they're used in
-//	for (unsigned int i = 0; i < numEdges; i++)
-//	{
-//		EdgeRecord& er = records[i];
-//
-//		if (er.Concave)
-//		{
-//			for (unsigned int j = 0; j < numEdges; j++)
-//			{
-//				EdgeRecord& curER = records[j];
-//
-//				if (curER.VertIdx1 == er.VertIdx1 ||
-//					curER.VertIdx1 == er.VertIdx2)
-//					UseFlags[curER.TriIdx] &= ~curER.Vert1Flags;
-//
-//				if (curER.VertIdx2 == er.VertIdx1 ||
-//					curER.VertIdx2 == er.VertIdx2)
-//					UseFlags[curER.TriIdx] &= ~curER.Vert2Flags;
-//			}
-//		}
-//	}
-//
-//	delete [] records;
+    FaceAngleStorageMethod faceAndgesRequirementToUse = faceAndgesRequirement;
+
+    if (faceAndgesRequirement != ASM__INVALID && haveFaceAnglesBeenBuilt())
+    {
+        dUASSERT(false, "Another request to build face angles after they had already been built");
+
+        faceAndgesRequirementToUse = ASM__INVALID;
+    }
+
+    // If this mesh has already been preprocessed, exit
+    bool result = faceAndgesRequirementToUse == ASM__INVALID || retrieveTriangleCount() == 0 
+        || meaningfulPreprocessData(faceAndgesRequirementToUse);
+    return result;
 }
 
-dTriMeshDataID dGeomTriMeshDataCreate(){
-    return new dxTriMeshData();
-}
-
-void dGeomTriMeshDataDestroy(dTriMeshDataID g){
-    delete g;
-}
-
-void dGeomTriMeshSetLastTransform( dxGeom* g, dMatrix4 last_trans )
+struct TrimeshDataVertexIndexAccessor_GIMPACT
 {
-//	dAASSERT(g)
-//    dUASSERT(g->type == dTriMeshClass, "geom not trimesh");
+    enum
+    {
+        TRIANGLEINDEX_STRIDE = dxTriMesh::TRIANGLEINDEX_STRIDE,
+    };
 
-//    for (int i=0; i<16; i++)
-//        (((dxTriMesh*)g)->last_trans)[ i ] = last_trans[ i ];
+    explicit TrimeshDataVertexIndexAccessor_GIMPACT(dxTriMeshData *meshData):
+        m_TriangleVertexIndices(meshData->retrieveTriangleVertexIndices())
+    {
+        dIASSERT(meshData->retrieveTriangleStride() == TRIANGLEINDEX_STRIDE);
+    }
 
-//    return;
-}
+    void getTriangleVertexIndices(unsigned out_VertexIndices[dMTV__MAX], unsigned triangleIdx) const
+    {
+        const GUINT32 *triIndicesBegin = m_TriangleVertexIndices;
+        const unsigned triStride = TRIANGLEINDEX_STRIDE;
 
+        const GUINT32 *triIndicesOfInterest = (const GUINT32 *)((const uint8 *)triIndicesBegin + (sizeint)triangleIdx * triStride);
+        std::copy(triIndicesOfInterest, triIndicesOfInterest + dMTV__MAX, out_VertexIndices);
+    }
 
-//dReal* dGeomTriMeshGetLastTransform( dxGeom* g )
-//{
-//	dAASSERT(g)
-//    dUASSERT(g->type == dTriMeshClass, "geom not trimesh");
-//
-//    return (dReal*)(((dxTriMesh*)g)->last_trans);
-//}
+    const GUINT32           *m_TriangleVertexIndices;
+};
 
-
-
-
-void dGeomTriMeshDataSet(dTriMeshDataID g, int data_id, void* in_data)
+struct TrimeshDataTrianglePointAccessor_GIMPACT
 {
-//    dUASSERT(g, "argument not trimesh data");
-//
-//    double *elem;
-//
-//    switch (data_id) {
-//    case TRIMESH_FACE_NORMALS:
-//	g->Normals = (dReal *) in_data;
-//	break;
-//
-//    case TRIMESH_LAST_TRANSFORMATION:
-//	elem = (double *) in_data;
-//    for (int i=0; i<16; i++)
-//        g->last_trans[i] = (dReal) elem[i];
-//
-//	break;
-//    default:
-//	dUASSERT(data_id, "invalid data type");
-//	break;
-//    }
-//
-//    return;
+    enum
+    {
+        VERTEXINSTANCE_STRIDE = dxTriMesh::VERTEXINSTANCE_STRIDE,
+        TRIANGLEINDEX_STRIDE = dxTriMesh::TRIANGLEINDEX_STRIDE,
+    };
 
-}
+    TrimeshDataTrianglePointAccessor_GIMPACT(dxTriMeshData *meshData):
+        m_VertexInstances(meshData->retrieveVertexInstances()),
+        m_TriangleVertexIndices(meshData->retrieveTriangleVertexIndices())
+    {
+        dIASSERT((unsigned)meshData->retrieveVertexStride() == (unsigned)VERTEXINSTANCE_STRIDE);
+        dIASSERT((unsigned)meshData->retrieveTriangleStride() == (unsigned)TRIANGLEINDEX_STRIDE);
+    }
 
+    void getTriangleVertexPoints(dVector3 out_Points[dMTV__MAX], unsigned triangleIndex) const
+    {
+        dxTriMeshData::retrieveTriangleVertexPoints(out_Points, triangleIndex, 
+            &m_VertexInstances[0][0], VERTEXINSTANCE_STRIDE, m_TriangleVertexIndices, TRIANGLEINDEX_STRIDE);
+    }
 
+    const vec3f             *m_VertexInstances;
+    const GUINT32           *m_TriangleVertexIndices;
+};
 
-void*  dGeomTriMeshDataGet(dTriMeshDataID g, int data_id)
+bool dxTriMeshData::meaningfulPreprocessData(FaceAngleStorageMethod faceAndgesRequirement/*=ASM__INVALID*/)
 {
-    dUASSERT(g, "argument not trimesh data");
+    const bool buildFaceAngles = true; dIASSERT(faceAndgesRequirement != ASM__INVALID);
+    // dIASSERT(buildFaceAngles);
+    dIASSERT(/*!buildFaceAngles || */!haveFaceAnglesBeenBuilt());
 
-//    switch (data_id) {
-//    case TRIMESH_FACE_NORMALS:
-//        return NULL;
-//        break;
-//
-//    case TRIMESH_LAST_TRANSFORMATION:
-//        return NULL;
-//        break;
-//    default:
-//        dUASSERT(data_id, "invalid data type");
-//        break;
-//    }
+    bool result = false;
 
-    return NULL;
+    bool anglesAllocated = false;
+
+    do 
+    {
+        if (buildFaceAngles)
+        {
+            if (!allocateFaceAngles(faceAndgesRequirement))
+            {
+                break;
+            }
+        }
+
+        anglesAllocated = true;
+
+        const unsigned int numTris = retrieveTriangleCount();
+        const unsigned int numVertices = retrieveVertexCount();
+        sizeint numEdges = (sizeint)numTris * dMTV__MAX;
+        dIASSERT(numVertices <= numEdges); // Edge records are going to be used for vertex data as well
+
+        const sizeint recordsMemoryRequired = dEFFICIENT_SIZE(numEdges * sizeof(EdgeRecord));
+        const sizeint verticesMemoryRequired = /*dEFFICIENT_SIZE*/(numVertices * sizeof(VertexRecord)); // Skip alignment for the last chunk
+        const sizeint totalTempMemoryRequired = recordsMemoryRequired + verticesMemoryRequired;
+        void *tempBuffer = dAlloc(totalTempMemoryRequired);
+
+        if (tempBuffer == NULL)
+        {
+            break;
+        }
+
+        EdgeRecord *edges = (EdgeRecord *)tempBuffer;
+        VertexRecord *vertices = (VertexRecord *)((uint8 *)tempBuffer + recordsMemoryRequired);
+
+        TrimeshDataVertexIndexAccessor_GIMPACT indexAccessor(this);
+        meaningfulPreprocess_SetupEdgeRecords(edges, numEdges, indexAccessor);
+
+        // Sort the edges, so the ones sharing the same verts are beside each other
+        std::sort(edges, edges + numEdges);
+
+        TrimeshDataTrianglePointAccessor_GIMPACT pointAccessor(this);
+        const dReal *const externalNormals = retrieveNormals();
+        IFaceAngleStorageControl *faceAngles = retrieveFaceAngles();
+        meaningfulPreprocess_buildEdgeFlags(NULL, faceAngles, edges, numEdges, vertices, externalNormals, pointAccessor);
+
+        dFree(tempBuffer, totalTempMemoryRequired);
+
+        result = true;
+    }
+    while (false);
+
+    if (!result)
+    {
+        if (anglesAllocated)
+        {
+            if (buildFaceAngles)
+            {
+                freeFaceAngles();
+            }
+        }
+    }
+
+    return result;
 }
 
 
-void dGeomTriMeshDataBuildSingle1(dTriMeshDataID g,
-                                  const void* Vertices, int VertexStride, int VertexCount,
-                                  const void* Indices, int IndexCount, int TriStride,
-                                  const void* Normals)
-{
-    dUASSERT(g, "argument not trimesh data");
-
-    g->Build(Vertices, VertexStride, VertexCount,
-             Indices, IndexCount, TriStride,
-             Normals,
-             true);
-}
-
-
-void dGeomTriMeshDataBuildSingle(dTriMeshDataID g,
-                                 const void* Vertices, int VertexStride, int VertexCount,
-                                 const void* Indices, int IndexCount, int TriStride)
-{
-    dGeomTriMeshDataBuildSingle1(g, Vertices, VertexStride, VertexCount,
-                                 Indices, IndexCount, TriStride, (void*)NULL);
-}
-
-
-void dGeomTriMeshDataBuildDouble1(dTriMeshDataID g,
-                                  const void* Vertices, int VertexStride, int VertexCount,
-                                 const void* Indices, int IndexCount, int TriStride,
-				 const void* Normals)
-{
-    dUASSERT(g, "argument not trimesh data");
-
-    g->Build(Vertices, VertexStride, VertexCount,
-             Indices, IndexCount, TriStride,
-             Normals,
-             false);
-}
-
-
-void dGeomTriMeshDataBuildDouble(dTriMeshDataID g,
-				 const void* Vertices, int VertexStride, int VertexCount,
-                                 const void* Indices, int IndexCount, int TriStride) {
-    dGeomTriMeshDataBuildDouble1(g, Vertices, VertexStride, VertexCount,
-                                 Indices, IndexCount, TriStride, NULL);
-}
-
-
-void dGeomTriMeshDataBuildSimple1(dTriMeshDataID g,
-                                  const dReal* Vertices, int VertexCount,
-                                 const int* Indices, int IndexCount,
-                                 const int* Normals){
-#ifdef dSINGLE
-    dGeomTriMeshDataBuildSingle1(g,
-				Vertices, 4 * sizeof(dReal), VertexCount,
-				Indices, IndexCount, 3 * sizeof(unsigned int),
-				Normals);
-#else
-    dGeomTriMeshDataBuildDouble1(g, Vertices, 4 * sizeof(dReal), VertexCount,
-				Indices, IndexCount, 3 * sizeof(unsigned int),
-				Normals);
-#endif
-}
-
-
-void dGeomTriMeshDataBuildSimple(dTriMeshDataID g,
-                                 const dReal* Vertices, int VertexCount,
-                                 const int* Indices, int IndexCount) {
-    dGeomTriMeshDataBuildSimple1(g,
-                                 Vertices, VertexCount, Indices, IndexCount,
-                                 (const int*)NULL);
-}
-
-void dGeomTriMeshDataPreprocess(dTriMeshDataID g)
-{
-    dUASSERT(g, "argument not trimesh data");
-	g->Preprocess();
-}
-
-void dGeomTriMeshDataGetBuffer(dTriMeshDataID g, unsigned char** buf, int* bufLen)
-{
-    dUASSERT(g, "argument not trimesh data");
-	*buf = NULL;
-	*bufLen = 0;
-}
-
-void dGeomTriMeshDataSetBuffer(dTriMeshDataID g, unsigned char* buf)
-{
-    dUASSERT(g, "argument not trimesh data");
-//	g->UseFlags = buf;
-}
-
-
+//////////////////////////////////////////////////////////////////////////
 // Trimesh
 
-dxTriMesh::dxTriMesh(dSpaceID Space, dTriMeshDataID Data) : dxGeom(Space, 1){
-    type = dTriMeshClass;
-
-    this->Data = Data;
-
-    //Create trimesh
-
-    gim_trimesh_create_from_data(&m_collision_trimesh,( vec3f *)(&Data->m_Vertices[0]), Data->m_VertexCount ,0, ( GUINT *)(&Data->m_Indices[0]), Data->m_TriangleCount*3,0,1);
-
-
-	/* TC has speed/space 'issues' that don't make it a clear
-	   win by default on spheres/boxes. */
-	this->doSphereTC = true;
-	this->doBoxTC = true;
-	this->doCapsuleTC = true;
-
-}
-
-dxTriMesh::~dxTriMesh(){
-
+dxTriMesh::~dxTriMesh()
+{
     //Terminate Trimesh
     gim_trimesh_destroy(&m_collision_trimesh);
+    gim_terminate_buffer_managers(m_buffer_managers);
 }
 
 
-void dxTriMesh::ClearTCCache(){
-
-}
-
-
-int dxTriMesh::AABBTest(dxGeom* g, dReal aabb[6]){
-    return 1;
-}
-
-
+/*virtual */
 void dxTriMesh::computeAABB()
 {
     //update trimesh transform
     mat4f transform;
     IDENTIFY_MATRIX_4X4(transform);
     MakeMatrix(this, transform);
-    gim_trimesh_set_tranform(&m_collision_trimesh,transform);
+    gim_trimesh_set_tranform(&m_collision_trimesh, transform);
 
     //Update trimesh boxes
     gim_trimesh_update(&m_collision_trimesh);
 
-    memcpy(aabb,&m_collision_trimesh.m_aabbset.m_global_bound,6*sizeof(GREAL));
+    GIM_AABB_COPY( &m_collision_trimesh.m_aabbset.m_global_bound, aabb );
 }
 
 
-void dxTriMeshData::UpdateData()
+void dxTriMesh::assignMeshData(dxTriMeshData *Data)
 {
-//  BVTree.Refit();
+    // GIMPACT only supports stride 12, so we need to catch the error early.
+    dUASSERT(
+        (unsigned int)Data->retrieveVertexStride() == (unsigned)VERTEXINSTANCE_STRIDE 
+        && (unsigned int)Data->retrieveTriangleStride() == (unsigned)TRIANGLEINDEX_STRIDE,
+        "Gimpact trimesh only supports a stride of 3 float/int\n"
+        "This means that you cannot use dGeomTriMeshDataBuildSimple() with Gimpact.\n"
+        "Change the stride, or use Opcode trimeshes instead.\n"
+    );
+
+    dxTriMesh_Parent::assignMeshData(Data);
+
+    //Create trimesh
+    const vec3f *vertexInstances = Data->retrieveVertexInstances();
+    if ( vertexInstances != NULL )
+    {
+        const GUINT32 *triangleVertexIndices = Data->retrieveTriangleVertexIndices();
+
+        sizeint vertexInstanceCount = Data->retrieveVertexCount();
+        sizeint triangleVertexCount = (sizeint)Data->retrieveTriangleCount() * dMTV__MAX;
+
+        gim_trimesh_create_from_data(
+            m_buffer_managers,
+            &m_collision_trimesh,                           // gimpact mesh
+            const_cast<vec3f *>(vertexInstances),           // vertices
+            dCAST_TO_SMALLER(GUINT32, vertexInstanceCount), // nr of verts
+            0,                                              // copy verts?
+            const_cast<GUINT32 *>(triangleVertexIndices),   // indices
+            dCAST_TO_SMALLER(GUINT32, triangleVertexCount), // nr of indices
+            0,                                              // copy indices?
+            1                                               // transformed reply
+        );
+    }
 }
 
 
+//////////////////////////////////////////////////////////////////////////
+
+/*extern */
+dTriMeshDataID dGeomTriMeshDataCreate()
+{
+    return new dxTriMeshData();
+}
+
+/*extern */
+void dGeomTriMeshDataDestroy(dTriMeshDataID g)
+{
+    dxTriMeshData *data = g;
+    delete data;
+}
+
+/*extern */
+void dGeomTriMeshDataSet(dTriMeshDataID g, int dataId, void *pDataLocation) 
+{
+    dUASSERT(g, "The argument is not a trimesh data");
+
+    dxTriMeshData *data = g;
+
+    switch (dataId)
+    {
+        case dTRIMESHDATA_FACE_NORMALS:
+        {
+            data->assignNormals((const dReal *)pDataLocation);
+            break;
+        }
+
+        case dTRIMESHDATA_USE_FLAGS: // Not used for GIMPACT
+        {
+            break;
+        }
+
+        // case dTRIMESHDATA__MAX: -- To be located by Find in Files
+        default:
+        {
+            dUASSERT(dataId, "invalid data type");
+            break;
+        }
+    }
+}
+
+static void *geomTriMeshDataGet(dTriMeshDataID g, int dataId, sizeint *pOutDataSize) ;
+
+/*extern */
+void *dGeomTriMeshDataGet(dTriMeshDataID g, int dataId) 
+{
+    return geomTriMeshDataGet(g, dataId, NULL);
+}
+
+/*extern */
+void *dGeomTriMeshDataGet2(dTriMeshDataID g, int dataId, sizeint *pOutDataSize) 
+{
+    return geomTriMeshDataGet(g, dataId, pOutDataSize);
+}
+
+static 
+void *geomTriMeshDataGet(dTriMeshDataID g, int dataId, sizeint *pOutDataSize) 
+{
+    dUASSERT(g, "The argument is not a trimesh data");
+
+    const dxTriMeshData *data = g;
+
+    void *result = NULL;
+
+    switch (dataId)
+    {
+        case dTRIMESHDATA_FACE_NORMALS:
+        {
+            if (pOutDataSize != NULL)
+            {
+                *pOutDataSize = data->calculateNormalsMemoryRequirement();
+            }
+
+            result = (void *)data->retrieveNormals();
+            break;
+        }
+
+        case dTRIMESHDATA_USE_FLAGS: // Not not used for GIMPACT
+        {
+            if (pOutDataSize != NULL)
+            {
+                *pOutDataSize = 0;
+            }
+
+            break;
+        }
+
+        // case dTRIMESHDATA__MAX: -- To be located by Find in Files
+        default:
+        {
+            if (pOutDataSize != NULL)
+            {
+                *pOutDataSize = 0;
+            }
+
+            dUASSERT(dataId, "invalid data type");
+            break;
+        }
+    }
+
+    return result;
+}
+
+/*extern */
+void dGeomTriMeshDataBuildSingle1(dTriMeshDataID g,
+    const void* Vertices, int VertexStride, int VertexCount,
+    const void* Indices, int IndexCount, int TriStride,
+    const void* Normals)
+{
+    dUASSERT(g, "The argument is not a trimesh data");
+    dAASSERT(Vertices);
+    dAASSERT(Indices);
+
+    dxTriMeshData *data = g;
+
+    data->buildData(Vertices, VertexStride, VertexCount,
+        Indices, IndexCount, TriStride,
+        Normals,
+        true);
+}
+
+/*extern */
+void dGeomTriMeshDataBuildDouble1(dTriMeshDataID g,
+    const void* Vertices, int VertexStride, int VertexCount,
+    const void* Indices, int IndexCount, int TriStride,
+    const void* Normals)
+{
+    dUASSERT(g, "The argument is not a trimesh data");
+    dAASSERT(Vertices);
+    dAASSERT(Indices);
+
+    dxTriMeshData *data = g;
+
+    data->buildData(Vertices, VertexStride, VertexCount,
+        Indices, IndexCount, TriStride,
+        Normals,
+        false);
+}
+
+
+//////////////////////////////////////////////////////////////////////////
+
+/*extern */
 dGeomID dCreateTriMesh(dSpaceID space,
-		       dTriMeshDataID Data,
-		       dTriCallback* Callback,
-		       dTriArrayCallback* ArrayCallback,
-		       dTriRayCallback* RayCallback)
+    dTriMeshDataID Data,
+    dTriCallback* Callback,
+    dTriArrayCallback* ArrayCallback,
+    dTriRayCallback* RayCallback)
 {
-    dxTriMesh* Geom = new dxTriMesh(space, Data);
-    Geom->Callback = Callback;
-    Geom->ArrayCallback = ArrayCallback;
-    Geom->RayCallback = RayCallback;
-
-    return Geom;
+    dxTriMesh *mesh = new dxTriMesh(space, Data, Callback, ArrayCallback, RayCallback);
+    return mesh;
 }
 
-void dGeomTriMeshSetCallback(dGeomID g, dTriCallback* Callback)
+
+/*extern */
+void dGeomTriMeshSetLastTransform(dGeomID g, const dMatrix4 last_trans ) 
 {
-	dUASSERT(g && g->type == dTriMeshClass, "argument not a trimesh");
-	((dxTriMesh*)g)->Callback = Callback;
+    dAASSERT(g);
+    dUASSERT(g->type == dTriMeshClass, "The geom is not a trimesh");
+
+    //stub
 }
 
-dTriCallback* dGeomTriMeshGetCallback(dGeomID g)
+/*extern */
+const dReal *dGeomTriMeshGetLastTransform(dGeomID g)
 {
-	dUASSERT(g && g->type == dTriMeshClass, "argument not a trimesh");
-	return ((dxTriMesh*)g)->Callback;
-}
+    dAASSERT(g);
+    dUASSERT(g->type == dTriMeshClass, "The geom is not a trimesh");
 
-void dGeomTriMeshSetArrayCallback(dGeomID g, dTriArrayCallback* ArrayCallback)
-{
-	dUASSERT(g && g->type == dTriMeshClass, "argument not a trimesh");
-	((dxTriMesh*)g)->ArrayCallback = ArrayCallback;
-}
-
-dTriArrayCallback* dGeomTriMeshGetArrayCallback(dGeomID g)
-{
-	dUASSERT(g && g->type == dTriMeshClass, "argument not a trimesh");
-	return ((dxTriMesh*)g)->ArrayCallback;
-}
-
-void dGeomTriMeshSetRayCallback(dGeomID g, dTriRayCallback* Callback)
-{
-	dUASSERT(g && g->type == dTriMeshClass, "argument not a trimesh");
-	((dxTriMesh*)g)->RayCallback = Callback;
-}
-
-dTriRayCallback* dGeomTriMeshGetRayCallback(dGeomID g)
-{
-	dUASSERT(g && g->type == dTriMeshClass, "argument not a trimesh");
-	return ((dxTriMesh*)g)->RayCallback;
-}
-
-void dGeomTriMeshSetData(dGeomID g, dTriMeshDataID Data)
-{
-	dUASSERT(g && g->type == dTriMeshClass, "argument not a trimesh");
-	((dxTriMesh*)g)->Data = Data;
-}
-
-dTriMeshDataID dGeomTriMeshGetData(dGeomID g)
-{
-  dUASSERT(g && g->type == dTriMeshClass, "argument not a trimesh");
-  return ((dxTriMesh*)g)->Data;
+    return NULL; // stub
 }
 
 
+#endif // #if dTRIMESH_ENABLED && dTRIMESH_GIMPACT
 
-void dGeomTriMeshEnableTC(dGeomID g, int geomClass, int enable)
-{
-	dUASSERT(g && g->type == dTriMeshClass, "argument not a trimesh");
-
-	switch (geomClass)
-	{
-		case dSphereClass:
-			((dxTriMesh*)g)->doSphereTC = (1 == enable);
-			break;
-		case dBoxClass:
-			((dxTriMesh*)g)->doBoxTC = (1 == enable);
-			break;
-		case dCapsuleClass:
-//		case dCCylinderClass:
-			((dxTriMesh*)g)->doCapsuleTC = (1 == enable);
-			break;
-	}
-}
-
-int dGeomTriMeshIsTCEnabled(dGeomID g, int geomClass)
-{
-	dUASSERT(g && g->type == dTriMeshClass, "argument not a trimesh");
-
-	switch (geomClass)
-	{
-		case dSphereClass:
-			if (((dxTriMesh*)g)->doSphereTC)
-				return 1;
-			break;
-		case dBoxClass:
-			if (((dxTriMesh*)g)->doBoxTC)
-				return 1;
-			break;
-		case dCapsuleClass:
-			if (((dxTriMesh*)g)->doCapsuleTC)
-				return 1;
-			break;
-	}
-	return 0;
-}
-
-void dGeomTriMeshClearTCCache(dGeomID g){
-    dUASSERT(g && g->type == dTriMeshClass, "argument not a trimesh");
-
-    dxTriMesh* Geom = (dxTriMesh*)g;
-    Geom->ClearTCCache();
-}
-
-/*
- * returns the TriMeshDataID
- */
-dTriMeshDataID
-dGeomTriMeshGetTriMeshDataID(dGeomID g)
-{
-    dxTriMesh* Geom = (dxTriMesh*) g;
-    return Geom->Data;
-}
-
-// Getting data
-void dGeomTriMeshGetTriangle(dGeomID g, int Index, dVector3* v0, dVector3* v1, dVector3* v2)
-{
-    dUASSERT(g && g->type == dTriMeshClass, "argument not a trimesh");
-
-    dxTriMesh* Geom = (dxTriMesh*)g;
-	gim_trimesh_locks_work_data(&Geom->m_collision_trimesh);	
-	gim_trimesh_get_triangle_vertices(&Geom->m_collision_trimesh, Index, (*v0),(*v1),(*v2));	
-	gim_trimesh_unlocks_work_data(&Geom->m_collision_trimesh);
- 
-}
-
-void dGeomTriMeshGetPoint(dGeomID g, int Index, dReal u, dReal v, dVector3 Out){
-    dUASSERT(g && g->type == dTriMeshClass, "argument not a trimesh");
-
-    dxTriMesh* Geom = (dxTriMesh*)g;
-    dVector3 dv[3];
-	gim_trimesh_locks_work_data(&Geom->m_collision_trimesh);	
-	gim_trimesh_get_triangle_vertices(&Geom->m_collision_trimesh, Index, dv[0],dv[1],dv[2]);
-    GetPointFromBarycentric(dv, u, v, Out);
-	gim_trimesh_unlocks_work_data(&Geom->m_collision_trimesh);
-}
-
-int dGeomTriMeshGetTriangleCount (dGeomID g)
-{
-    dxTriMesh* Geom = (dxTriMesh*)g;	
-	return gim_trimesh_get_triangle_count(&Geom->m_collision_trimesh);
-}
-
-void dGeomTriMeshDataUpdate(dTriMeshDataID g) {
-    dUASSERT(g, "argument not trimesh data");
-    g->UpdateData();
-}
-
-#endif

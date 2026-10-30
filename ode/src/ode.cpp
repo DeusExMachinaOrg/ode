@@ -40,6 +40,9 @@
 #include "util.h"
 #include "odetls.h"
 
+#include <set>
+#include <vector>
+
 // misc defines
 #define ALLOCA dALLOCA16
 
@@ -63,7 +66,8 @@ void addObjectToList (dObject *obj, dObject **first)
 static inline void removeObjectFromList (dObject *obj)
 {
     if (obj->next) obj->next->tome = obj->tome;
-    *(obj->tome) = obj->next;
+    // retruxx: an object taken out of its world (dBodyRemoveIslandFromWorld) is in no list
+    if (obj->tome) *(obj->tome) = obj->next;
     // safeguard
     obj->next = NULL;
     obj->tome = NULL;
@@ -126,6 +130,11 @@ static inline int generateWorldCheckTag()
     return ++g_world_check_tag_generator;
 }
 
+// retruxx: visits every body of a world, the enabled ones and then the disabled ones.
+#define dForEachWorldBody(w, b) \
+    for (int bodyList_ = 0; bodyList_ < 2; bodyList_++) \
+        for (b = bodyList_ ? (w)->first_disabled_body : (w)->firstbody; b; b = (dxBody*)b->next)
+
 static void checkWorld (dxWorld *w)
 {
     dxBody *b;
@@ -133,10 +142,11 @@ static void checkWorld (dxWorld *w)
 
     // check there are no loops
     if (listHasLoops (w->firstbody)) dDebug (0,"body list has loops");
+    if (listHasLoops (w->first_disabled_body)) dDebug (0,"disabled body list has loops");
     if (listHasLoops (w->firstjoint)) dDebug (0,"joint list has loops");
 
     // check lists are well formed (check `tome' pointers)
-    for (b=w->firstbody; b; b=(dxBody*)b->next) {
+    dForEachWorldBody (w,b) {
         if (b->next && b->next->tome != &b->next)
             dDebug (0,"bad tome pointer in body list");
     }
@@ -147,7 +157,7 @@ static void checkWorld (dxWorld *w)
 
     // check counts
     int n = 0;
-    for (b=w->firstbody; b; b=(dxBody*)b->next) n++;
+    dForEachWorldBody (w,b) n++;
     if (w->nb != n) dDebug (0,"body count incorrect");
     n = 0;
     for (j=w->firstjoint; j; j=(dxJoint*)j->next) n++;
@@ -155,11 +165,11 @@ static void checkWorld (dxWorld *w)
 
     // set all tag values to a known value
     int count = generateWorldCheckTag();
-    for (b=w->firstbody; b; b=(dxBody*)b->next) b->tag = count;
+    dForEachWorldBody (w,b) b->tag = count;
     for (j=w->firstjoint; j; j=(dxJoint*)j->next) j->tag = count;
 
     // check all body/joint world pointers are ok
-    for (b=w->firstbody; b; b=(dxBody*)b->next) if (b->world != w)
+    dForEachWorldBody (w,b) if (b->world != w)
         dDebug (0,"bad world pointer in body list");
     for (j=w->firstjoint; j; j=(dxJoint*)j->next) if (j->world != w)
         dDebug (0,"bad world pointer in joint list");
@@ -189,7 +199,7 @@ static void checkWorld (dxWorld *w)
     }
 
     // check all body joint lists (correct body ptrs)
-    for (b=w->firstbody; b; b=(dxBody*)b->next) {
+    dForEachWorldBody (w,b) {
         for (dxJointNode *n=b->firstjoint; n; n=n->next) {
             if (&n->joint->node[0] == n) {
                 if (n->joint->node[1].body != b)
@@ -280,6 +290,11 @@ dxBody *dBodyCreate (dxWorld *w)
 
     b->flags |= dxBodyGyroscopic;
 
+    // retruxx: the shipped build copies the world's damping into every new body
+    b->retruxx_damping = w->retruxx_damping;
+    if (w->retruxx_damping_flag) b->flags |= dxBodyRetruxxDamping;
+    b->change_enabled_state_callback = NULL;
+
     return b;
 }
 
@@ -310,7 +325,8 @@ void dBodyDestroy (dxBody *b)
         n = next;
     }
     removeObjectFromList (b);
-    b->world->nb--;
+    // retruxx: a body taken out of its world (dBodyRemoveIslandFromWorld) has none
+    if (b->world) b->world->nb--;
 
     // delete the average buffers
     if(b->average_lvel_buffer)
@@ -845,20 +861,39 @@ int dBodyIsKinematic (dBodyID b)
     return b->invMass == 0;
 }
 
+// retruxx: moves a body to the head of its world's enabled or disabled list, to match its flag.
+static void relinkBodyByEnabledState (dxBody *b)
+{
+    if (!b->world) return;
+    removeObjectFromList (b);
+    dxBody **first = (b->flags & dxBodyDisabled) ? &b->world->first_disabled_body : &b->world->firstbody;
+    addObjectToList (b,(dObject**) first);
+}
+
+
 void dBodyEnable (dBodyID b)
 {
+    // retruxx: as shipped (RVA 0x7C67D0), enabling an enabled body does nothing, the world keeps
+    // enabled and disabled bodies in separate lists, and a change of state calls the body's callback.
     dAASSERT (b);
+    if (!(b->flags & dxBodyDisabled)) return;
     b->flags &= ~dxBodyDisabled;
     b->adis_stepsleft = b->adis.idle_steps;
     b->adis_timeleft = b->adis.idle_time;
     // no code for average-processing needed here
+    relinkBodyByEnabledState (b);
+    if (b->change_enabled_state_callback) b->change_enabled_state_callback (b);
 }
 
 
 void dBodyDisable (dBodyID b)
 {
+    // retruxx: see dBodyEnable (RVA 0x7C6840).
     dAASSERT (b);
+    if (b->flags & dxBodyDisabled) return;
     b->flags |= dxBodyDisabled;
+    relinkBodyByEnabledState (b);
+    if (b->change_enabled_state_callback) b->change_enabled_state_callback (b);
 }
 
 
@@ -989,21 +1024,13 @@ int dBodyGetAutoDisableFlag (dBodyID b)
 
 void dBodySetAutoDisableFlag (dBodyID b, int do_auto_disable)
 {
+    // retruxx: as in the shipped ODE 0.5, only the flag changes. ODE 0.16 also enables the body and
+    // resets its auto-disable parameters from its world when auto-disabling is turned off; the game
+    // turns it off for every object it loads, which woke every static object of a saved game (and
+    // a body taken out of its world has no world to read).
     dAASSERT(b);
-    if (!do_auto_disable)
-    {
-        b->flags &= ~dxBodyAutoDisable;
-        // (mg) we should also reset the IsDisabled state to correspond to the DoDisabling flag
-        b->flags &= ~dxBodyDisabled;
-        b->adis.idle_steps = dWorldGetAutoDisableSteps(b->world);
-        b->adis.idle_time = dWorldGetAutoDisableTime(b->world);
-        // resetting the average calculations too
-        dBodySetAutoDisableAverageSamplesCount(b, dWorldGetAutoDisableAverageSamplesCount(b->world) );
-    }
-    else
-    {
-        b->flags |= dxBodyAutoDisable;
-    }
+    if (!do_auto_disable) b->flags &= ~dxBodyAutoDisable;
+    else b->flags |= dxBodyAutoDisable;
 }
 
 
@@ -1288,6 +1315,12 @@ static void FinalizeAndDestroyJointInstance(dxJoint *j, bool delete_it)
         removeJointReferencesFromAttachedBodies (j);
         removeObjectFromList (j);
         j->world->nj--;
+    }
+    else {
+        // retruxx: a joint taken out of its world with its bodies (dBodyRemoveIslandFromWorld)
+        // is still attached to them. A joint of a destroyed world is attached to nothing, so
+        // this does nothing for it.
+        removeJointReferencesFromAttachedBodies (j);
     }
     if (delete_it) { 
         delete j;
@@ -1593,6 +1626,12 @@ void dWorldDestroy (dxWorld *w)
     while (b) {
         nextb = (dxBody*) b->next;
         dBodyDestroy(b); // calling here dBodyDestroy for correct destroying! (i.e. the average buffers)
+        b = nextb;
+    }
+    b = w->first_disabled_body; // retruxx
+    while (b) {
+        nextb = (dxBody*) b->next;
+        dBodyDestroy(b);
         b = nextb;
     }
 
@@ -1997,6 +2036,23 @@ int dWorldGetAutoDisableFlag (dWorldID w)
 }
 
 
+void dWorldSetDampingFlag (dWorldID w, int do_damping)
+{
+    // retruxx: the game's damping (see dxBodyRetruxxDamping), for bodies created afterwards
+    dAASSERT(w);
+    w->retruxx_damping_flag = do_damping;
+}
+
+
+void dWorldSetDampingParameters (dWorldID w, dReal linearDamping, dReal angularDamping)
+{
+    // retruxx: see dWorldSetDampingFlag
+    dAASSERT(w);
+    w->retruxx_damping.linear = linearDamping;
+    w->retruxx_damping.angular = angularDamping;
+}
+
+
 void dWorldSetAutoDisableFlag (dWorldID w, int do_auto_disable)
 {
     dAASSERT(w);
@@ -2366,3 +2422,124 @@ int dCheckConfiguration( const char* extension )
 // Local Variables:
 // c-basic-offset:4
 // End:
+
+
+//****************************************************************************
+// retruxx: extensions of the game's ODE
+
+void dBodySetChangeEnabledStateCallback (dBodyID b, void (*callback)(dBodyID))
+{
+    dAASSERT(b);
+    b->change_enabled_state_callback = callback;
+}
+
+
+int dBodyGetFlags (dBodyID b)
+{
+    dAASSERT(b);
+    return (int) (b->flags & (dxBodyFlagFiniteRotation | dxBodyFlagFiniteRotationAxis | dxBodyDisabled |
+        dxBodyNoGravity | dxBodyAutoDisable | dxBodyRetruxxDamping));
+}
+
+
+dReal dBodyGetAutoDisableTimeLeft (dBodyID b)
+{
+    dAASSERT(b);
+    return b->adis_timeleft;
+}
+
+
+int dBodyGetAutoDisableStepsLeft (dBodyID b)
+{
+    dAASSERT(b);
+    return b->adis_stepsleft;
+}
+
+
+void dBodyDetachAllContactJoints (dBodyID b)
+{
+    // detaches the body's contact joints from both their bodies, leaving them in their world
+    dAASSERT(b);
+    dxJointNode *n = b->firstjoint;
+    while (n) {
+        dxJoint *joint = n->joint;
+        n = n->next;
+        if (joint->type() == dJointTypeContact && (joint->node[0].body || joint->node[1].body))
+            removeJointReferencesFromAttachedBodies (joint);
+    }
+}
+
+
+// a body and everything joined to it (other than through contact joints) move into or out of a
+// world together.
+
+void dBodyAddIslandToWorld (dBodyID b, dWorldID w)
+{
+    // RVA 0x7C8140 - adds a body outside any world, and every body reachable through non-contact
+    // joints, to w, then the joints between them.
+    // NOTE: a joint's other body is not checked for null (a joint to the static environment
+    // crashes), and a body reached twice before it is added is added twice, as shipped.
+    dAASSERT(b && w);
+    if (b->world) return;
+    std::set<dxJoint*> jointsToAdd;
+    std::vector<dxBody*> stack;
+    stack.push_back (b);
+    while (!stack.empty()) {
+        dxBody *body = stack.back();
+        stack.pop_back();
+        dxBody **first = (body->flags & dxBodyDisabled) ? &w->first_disabled_body : &w->firstbody;
+        addObjectToList (body,(dObject**) first);
+        body->world = w;
+        w->nb++;
+        for (dxJointNode *n = body->firstjoint; n; n = n->next) {
+            if (n->joint->type() == dJointTypeContact) continue;
+            jointsToAdd.insert (n->joint);
+            if (!n->body->world) stack.push_back (n->body);
+        }
+    }
+    for (dxJoint *j : jointsToAdd) {
+        addObjectToList (j,(dObject**) &w->firstjoint);
+        j->world = w;
+        w->nj++;
+    }
+}
+
+
+void dBodyRemoveIslandFromWorld (dBodyID b)
+{
+    // RVA 0x7C7E40 - takes a body and every body reachable through non-contact joints out of
+    // their world: their contact joints are destroyed (unless in a joint group) and the other
+    // joints are unlinked but kept.
+    // NOTE: a body reached twice before it is removed is visited twice, as shipped; the second
+    // visit finds it already out of the world.
+    dAASSERT(b);
+    if (!b->world) return;
+    std::set<dxJoint*> jointsToRemove;
+    std::set<dxJoint*> jointsToDestroy;
+    std::vector<dxBody*> stack;
+    stack.push_back (b);
+    while (!stack.empty()) {
+        dxBody *body = stack.back();
+        stack.pop_back();
+        removeObjectFromList (body);
+        if (body->world) body->world->nb--;
+        body->world = NULL;
+        for (dxJointNode *n = body->firstjoint; n; n = n->next) {
+            if (n->joint->type() == dJointTypeContact) {
+                jointsToDestroy.insert (n->joint);
+                continue;
+            }
+            jointsToRemove.insert (n->joint);
+            if (n->body && n->body->world) stack.push_back (n->body);
+        }
+    }
+    for (dxJoint *j : jointsToDestroy) {
+        if (j->flags & dJOINT_INGROUP) continue;
+        FinalizeAndDestroyJointInstance (j, true);
+    }
+    for (dxJoint *j : jointsToRemove) {
+        removeObjectFromList (j);
+        if (j->world) j->world->nj--;
+        j->world = NULL;
+    }
+}

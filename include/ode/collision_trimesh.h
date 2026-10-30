@@ -306,6 +306,9 @@ int TriStride = sizeof(StridedTri);
 
 ODE_API int dGeomTriMeshGetTriangleCount (dGeomID g);
 
+/* retruxx: the triangle and vertex counts of the mesh */
+ODE_API void dGeomTriMeshGetInfo (dGeomID g, int *numTriangles, int *numVertices);
+
 ODE_API void dGeomTriMeshDataUpdate(dTriMeshDataID g);
 
 #ifdef __cplusplus

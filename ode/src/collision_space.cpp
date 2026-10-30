@@ -49,6 +49,7 @@ spaces
 void dGeomMoved (dxGeom *geom)
 {
     dAASSERT (geom);
+    dxGeom *moved = geom; // retruxx
 
     // if geom is offset, mark it as needing a calculate
     if (geom->offset_posr) {
@@ -72,6 +73,9 @@ void dGeomMoved (dxGeom *geom)
         geom->markAABBBad();
         geom = geom->parent_space;
     }
+
+    // retruxx: let the game know the geom moved
+    if (moved->moved_callback) moved->moved_callback (moved);
 }
 
 #define GEOM_ENABLED(g) (((g)->gflags & GEOM_ENABLE_TEST_MASK) == GEOM_ENABLE_TEST_VALUE)
@@ -83,6 +87,7 @@ dxSpace::dxSpace (dSpaceID _space) : dxGeom (_space,0)
 {
     count = 0;
     first = 0;
+    first_enabled = 0; // retruxx
     cleanup = 1;
     sublevel = 0;
     tls_kind = dSPACE_TLS_KIND_INIT_VALUE;
@@ -169,6 +174,7 @@ void dxSpace::add (dxGeom *geom)
     // add
     geom->parent_space = this;
     geom->spaceAdd (&first);
+    if (geom->gflags & GEOM_ENABLED) geom->spaceAddEnabled (&first_enabled); // retruxx
     count++;
 
     // enumerator has been invalidated
@@ -186,11 +192,13 @@ void dxSpace::remove (dxGeom *geom)
 
     // remove
     geom->spaceRemove();
+    geom->spaceRemoveEnabled(); // retruxx
     count--;
 
     // safeguard
     geom->next = 0;
     geom->tome = 0;
+    geom->next_enabled = 0;
     geom->parent_space = 0;
 
     // enumerator has been invalidated
@@ -206,6 +214,11 @@ void dxSpace::dirty (dxGeom *geom)
 {
     geom->spaceRemove();
     geom->spaceAdd (&first);
+    // retruxx: as in the shipped ODE 0.5, a dirty geom also goes to the front of the enabled geoms.
+    if (geom->tome_enabled) {
+        geom->spaceRemoveEnabled();
+        geom->spaceAddEnabled (&first_enabled);
+    }
 }
 
 //****************************************************************************
@@ -251,9 +264,9 @@ void dxSimpleSpace::collide (void *data, dNearCallback *callback)
     cleanGeoms();
 
     // intersect all bounding boxes
-    for (dxGeom *g1=first; g1; g1=g1->next) {
+    for (dxGeom *g1=first_enabled; g1; g1=g1->next_enabled) { // retruxx: the enabled geoms only
         if (GEOM_ENABLED(g1)){
-            for (dxGeom *g2=g1->next; g2; g2=g2->next) {
+            for (dxGeom *g2=g1->next_enabled; g2; g2=g2->next_enabled) {
                 if (GEOM_ENABLED(g2)){
                     collideAABBs (g1,g2,data,callback);
                 }
@@ -275,7 +288,7 @@ void dxSimpleSpace::collide2 (void *data, dxGeom *geom,
     geom->recomputeAABB();
 
     // intersect bounding boxes
-    for (dxGeom *g=first; g; g=g->next) {
+    for (dxGeom *g=first_enabled; g; g=g->next_enabled) { // retruxx: the enabled geoms only
         if (GEOM_ENABLED(g)){
             collideAABBs (g,geom,data,callback);
         }
@@ -374,6 +387,13 @@ struct dxHashSpace : public dxSpace {
     void cleanGeoms();
     void collide (void *data, dNearCallback *callback);
     void collide2 (void *data, dxGeom *geom, dNearCallback *callback);
+
+    // retruxx: collide's working memory, kept between calls
+    std::vector<dxAABB> hash_boxes_buffer;
+    std::vector<dxAABB> big_boxes_buffer;
+    std::vector<uint8> tested_buffer;
+    std::vector<Node *> table_buffer;
+    std::vector<Node> node_buffer;
 };
 
 
@@ -430,17 +450,29 @@ void dxHashSpace::collide (void *data, dNearCallback *callback)
     lock_count++;
     cleanGeoms();
 
+    // retruxx: the AABB lists, the tested bits, the hash table and its nodes live in buffers that the space keeps
+    // between calls, as ODE 0.5 kept them on the stack, instead of std::vectors and a `new Node` for every cell on
+    // every call: the game's global space holds every static object of a level, a few thousand geoms, and the
+    // allocations made it several times slower than the shipped ODE. The algorithm and the order of the pairs
+    // are unchanged.
+    if (hash_boxes_buffer.size() < (sizeint)count) {
+        hash_boxes_buffer.resize(count);
+        big_boxes_buffer.resize(count);
+    }
+    dxAABB *const hash_boxes = hash_boxes_buffer.data();
+    dxAABB *const big_boxes = big_boxes_buffer.data();
+    sizeint n = 0; // number of AABBs in main list
+    sizeint nbig = 0; // number of AABBs in the big_boxes list
+
     // create a list of auxiliary information for all geom axis aligned bounding
     // boxes. set the level for all AABBs. put AABBs larger than the space's
     // global_maxlevel in the big_boxes list, check everything else against
     // that list at the end. for AABBs that are not too big, record the maximum
     // level that we need.
 
-    typedef std::vector<dxAABB> AABBlist;
-    AABBlist hash_boxes; // list of AABBs in hash table
-    AABBlist big_boxes; // list of AABBs too big for hash table
+    sizeint nodecount = 0; // retruxx: the number of hash table nodes, to size the node buffer
     maxlevel = global_minlevel - 1;
-    for (geom = first; geom; geom=geom->next) {
+    for (geom = first_enabled; geom; geom=geom->next_enabled) { // retruxx: the enabled geoms only
         if (!GEOM_ENABLED(geom)){
             continue;
         }
@@ -457,29 +489,32 @@ void dxHashSpace::collide (void *data, dNearCallback *callback)
             // discretize AABB position to cell size
             for (i=0; i < 6; i++) {
                 dReal aabbBound = geom->aabb[i] * cellSizeRecip; // No computational errors so far!
-                dICHECK(aabbBound >= dMinIntExact && aabbBound </*=*/ dMaxIntExact); // Otherwise the scene is too large for integer types used 
+                dICHECK(aabbBound >= dMinIntExact && aabbBound </*=*/ dMaxIntExact); // Otherwise the scene is too large for integer types used
 
                 aabb.dbounds[i] = (int) dFloor(aabbBound);
             }
+            nodecount += (sizeint)(aabb.dbounds[1] - aabb.dbounds[0] + 1) *
+                (sizeint)(aabb.dbounds[3] - aabb.dbounds[2] + 1) * (sizeint)(aabb.dbounds[5] - aabb.dbounds[4] + 1);
             // set AABB index
-            aabb.index = hash_boxes.size();
+            aabb.index = n;
             // aabb goes in main list
-            hash_boxes.push_back(aabb);
+            hash_boxes[n++] = aabb;
         }
         else {
             // aabb is too big, put it in the big_boxes list. we don't care about
             // setting level, dbounds, index, or the maxlevel
-            big_boxes.push_back(aabb);
+            big_boxes[nbig++] = aabb;
         }
     }
-
-    sizeint n = hash_boxes.size(); // number of AABBs in main list
 
     // for `n' objects, an n*n array of bits is used to record if those objects
     // have been intersection-tested against each other yet. this array can
     // grow large with high n, but oh well...
     int tested_rowsize = (n+7) >> 3;	// number of bytes needed for n bits
-    std::vector<uint8> tested(n * tested_rowsize);
+    sizeint testedsize = n * tested_rowsize;
+    if (tested_buffer.size() < testedsize) tested_buffer.resize(testedsize);
+    uint8 *const tested = tested_buffer.data();
+    if (testedsize != 0) memset(tested, 0, testedsize);
 
     // create a hash table to store all AABBs. each AABB may take up to 8 cells.
     // we use chaining to resolve collisions, but we use a relatively large table
@@ -496,12 +531,17 @@ void dxHashSpace::collide (void *data, dNearCallback *callback)
     const unsigned long sz = prime[i];
 
     // allocate and initialize hash table node pointers
-    typedef std::vector<Node*> HashTable;
-    HashTable table(sz);
+    if (table_buffer.size() < (sizeint)sz) table_buffer.resize(sz);
+    Node **const table = table_buffer.data();
+    memset(table, 0, sz * sizeof(Node *));
+
+    if (node_buffer.size() < nodecount) node_buffer.resize(nodecount);
+    Node *const nodes = node_buffer.data();
+    sizeint nodesused = 0;
 
     // add each AABB to the hash table (may need to add it to up to 8 cells)
-    const AABBlist::iterator hashend = hash_boxes.end();
-    for (AABBlist::iterator aabb = hash_boxes.begin(); aabb != hashend; ++aabb) {
+    dxAABB *const hashend = hash_boxes + n;
+    for (dxAABB *aabb = hash_boxes; aabb != hashend; ++aabb) {
         const int *dbounds = aabb->dbounds;
         const int xend = dbounds[1];
         for (int xi = dbounds[0]; xi <= xend; xi++) {
@@ -513,11 +553,12 @@ void dxHashSpace::collide (void *data, dNearCallback *callback)
                 for (int zi = zbegin; zi <= zend; (hi = hi + 1U != sz ? hi + 1U : 0UL), zi++) {
                     // get the hash index
                     // add a new node to the hash table
-                    Node *node = new Node;
+                    dIASSERT(nodesused < nodecount);
+                    Node *node = &nodes[nodesused++];
                     node->x = xi;
                     node->y = yi;
                     node->z = zi;
-                    node->aabb = &*aabb;
+                    node->aabb = aabb;
                     node->next = table[hi];
                     table[hi] = node;
                 }
@@ -531,7 +572,7 @@ void dxHashSpace::collide (void *data, dNearCallback *callback)
     // intersecting higher level cells.
 
     int db[6];			// discrete bounds at current level
-    for (AABBlist::iterator aabb = hash_boxes.begin(); aabb != hashend; ++aabb) {
+    for (dxAABB *aabb = hash_boxes; aabb != hashend; ++aabb) {
         // we are searching for collisions with aabb
         for (i=0; i<6; i++) db[i] = aabb->dbounds[i];
         for (int level = aabb->level; ; ) {
@@ -548,7 +589,7 @@ void dxHashSpace::collide (void *data, dNearCallback *callback)
                         // search all nodes at this index
                         for (Node* node = table[hi]; node; node=node->next) {
                             // node points to an AABB that may intersect aabb
-                            if (node->aabb == &*aabb)
+                            if (node->aabb == aabb)
                                 continue;
                             if (node->aabb->level == level &&
                                 node->x == xi && node->y == yi && node->z == zi) {
@@ -586,29 +627,20 @@ void dxHashSpace::collide (void *data, dNearCallback *callback)
     // every AABB in the normal list must now be intersected against every
     // AABB in the big_boxes list. so let's hope there are not too many objects
     // in the big_boxes list.
-    const AABBlist::iterator bigend = big_boxes.end();
-    for (AABBlist::iterator aabb = hash_boxes.begin(); aabb != hashend; ++aabb) {
-        for (AABBlist::iterator aabb2 = big_boxes.begin(); aabb2 != bigend; ++aabb2) {
+    dxAABB *const bigend = big_boxes + nbig;
+    for (dxAABB *aabb = hash_boxes; aabb != hashend; ++aabb) {
+        for (dxAABB *aabb2 = big_boxes; aabb2 != bigend; ++aabb2) {
             collideAABBs (aabb->geom, aabb2->geom, data, callback);
         }
     }
 
     // intersected all AABBs in the big_boxes list together
-    for (AABBlist::iterator aabb = big_boxes.begin(); aabb != bigend; ++aabb) {
-        AABBlist::iterator aabb2 = aabb;
+    for (dxAABB *aabb = big_boxes; aabb != bigend; ++aabb) {
+        dxAABB *aabb2 = aabb;
         while (++aabb2 != bigend) {
             collideAABBs (aabb->geom, aabb2->geom, data, callback);
         }
     }
-
-    // deallocate table
-    const HashTable::iterator tableend = table.end();
-    for (HashTable::iterator el = table.begin(); el != tableend; ++el)
-        for (Node* node = *el; node; ) {
-            Node* next = node->next;
-            delete node;
-            node = next;
-        }
 
     lock_count--;
 }
@@ -627,7 +659,7 @@ void dxHashSpace::collide2 (void *data, dxGeom *geom,
     geom->recomputeAABB();
 
     // intersect bounding boxes
-    for (dxGeom *g=first; g; g=g->next) {
+    for (dxGeom *g=first_enabled; g; g=g->next_enabled) { // retruxx: the enabled geoms only
         if (GEOM_ENABLED(g)) collideAABBs (g,geom,data,callback);
     }
 
@@ -761,6 +793,15 @@ int dSpaceGetNumGeoms (dxSpace *space)
 }
 
 
+int dSpaceIsLocked (dxSpace *space)
+{
+    // retruxx: the game creates geoms in a spare space while the main one is being collided
+    dAASSERT (space);
+    dUASSERT (dGeomIsSpace(space),"argument not a space");
+    return space->lock_count != 0;
+}
+
+
 dGeomID dSpaceGetGeom (dxSpace *space, int i)
 {
     dAASSERT (space);
@@ -829,14 +870,15 @@ void dSpaceCollide2 (dxGeom *g1, dxGeom *g2, void *data,
             else {
                 // iterate through the space that has the fewest geoms, calling
                 // collide2 in the other space for each one.
+                // retruxx: the enabled geoms only, as in the shipped ODE 0.5
                 if (s1->count < s2->count) {
                     DataCallback dc = {data, callback};
-                    for (dxGeom *g = s1->first; g; g=g->next) {
+                    for (dxGeom *g = s1->first_enabled; g; g=g->next_enabled) {
                         s2->collide2 (&dc,g,swap_callback);
                     }
                 }
                 else {
-                    for (dxGeom *g = s2->first; g; g=g->next) {
+                    for (dxGeom *g = s2->first_enabled; g; g=g->next_enabled) {
                         s1->collide2 (data,g,callback);
                     }
                 }

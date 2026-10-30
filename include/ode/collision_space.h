@@ -151,6 +151,10 @@ ODE_API void dSpaceRemove (dSpaceID, dGeomID);
 ODE_API int dSpaceQuery (dSpaceID, dGeomID);
 ODE_API void dSpaceClean (dSpaceID);
 ODE_API int dSpaceGetNumGeoms (dSpaceID);
+
+/* retruxx: whether the space is being collided (dSpaceCollide or dSpaceCollide2 is running on
+   it), when geoms cannot be added to it or removed from it. */
+ODE_API int dSpaceIsLocked (dSpaceID);
 ODE_API dGeomID dSpaceGetGeom (dSpaceID, int i);
 
 /**

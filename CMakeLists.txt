@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 2.8.12)
+cmake_minimum_required(VERSION 3.13) # retruxx: CMake 4 dropped compatibility with versions before 3.5
 
 if(POLICY CMP0042)
 	cmake_policy(SET CMP0042 NEW)
@@ -200,6 +200,8 @@ set(
 	ode/src/collision_sapspace.cpp
 	ode/src/collision_space.cpp
 	ode/src/collision_space_internal.h
+	ode/src/collision_terrain_y.cpp
+	ode/src/collision_terrain_y.h
 	ode/src/collision_std.h
 	ode/src/collision_transform.cpp
 	ode/src/collision_transform.h
@@ -594,16 +596,19 @@ else()
 	target_compile_definitions(ODE PUBLIC -DdIDESINGLE PRIVATE -DCCD_IDESINGLE)
 endif()
 
+# retruxx: only the public headers are exported, so that ODE's internal ones (config.h, util.h,
+# array.h...) cannot shadow a user's headers of the same name.
 target_include_directories(
 	ODE
 	PUBLIC
 	$<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>
-	$<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/ode/src>
 	$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+	$<INSTALL_INTERFACE:$<INSTALL_PREFIX>/${CMAKE_INSTALL_INCLUDEDIR}>
+	PRIVATE
+	$<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/ode/src>
 	$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/ode/src>
 	$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/ode/src/joints>
 	$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/ou/include>
-	$<INSTALL_INTERFACE:$<INSTALL_PREFIX>/${CMAKE_INSTALL_INCLUDEDIR}>
 )
 
 if(ODE_16BIT_INDICES)

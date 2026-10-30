@@ -39,6 +39,7 @@ for geometry objects
 #include "collision_transform.h"
 #include "collision_trimesh_internal.h"
 #include "collision_space_internal.h"
+#include "collision_terrain_y.h"
 #include "odeou.h"
 
 #ifdef dLIBCCD_ENABLED
@@ -199,7 +200,9 @@ static void setAllColliders (int i, dColliderFn *fn)
     setCollider (dTriMeshClass,dRayClass,&dCollideRTL);
     setCollider (dTriMeshClass,dTriMeshClass,&dCollideTTL);
     setCollider (dTriMeshClass,dCapsuleClass,&dCollideCCTL);
-    setCollider (dTriMeshClass,dPlaneClass,&dCollideTrimeshPlane);
+    // retruxx: the shipped ODE has no trimesh-plane collider, so trimeshes pass through the
+    // world's border planes.
+    // setCollider (dTriMeshClass,dPlaneClass,&dCollideTrimeshPlane);
     setCollider (dCylinderClass,dTriMeshClass,&dCollideCylinderTrimesh);
     setCollider (dConvexClass,dTriMeshClass,&dCollideConvexTrimesh);
 #endif
@@ -253,6 +256,12 @@ static void setAllColliders (int i, dColliderFn *fn)
     //<-- Convex Collision
 
     //--> dHeightfield Collision
+    // retruxx: the game's height-map terrain
+    setCollider (dTerrainYClass,dSphereClass,&dCollideTerrainY);
+    setCollider (dTerrainYClass,dBoxClass,&dCollideTerrainY);
+    setCollider (dTerrainYClass,dCapsuleClass,&dCollideTerrainY);
+    setCollider (dTerrainYClass,dRayClass,&dCollideTerrainY);
+
     setCollider (dHeightfieldClass,dRayClass,&dCollideHeightfield);
     setCollider (dHeightfieldClass,dSphereClass,&dCollideHeightfield);
     setCollider (dHeightfieldClass,dBoxClass,&dCollideHeightfield);
@@ -364,10 +373,14 @@ dxGeom::dxGeom (dSpaceID _space, int is_placeable)
     tome = 0;
     next_ex = 0;
     tome_ex = 0;
+    next_enabled = 0; // retruxx
+    tome_enabled = 0;
     parent_space = 0;
     dSetZero (aabb,6);
     category_bits = ~0;
     collide_bits = ~0;
+    parent_transform = 0;
+    moved_callback = 0;
 
     // put this geom in a space if required
     if (_space) dSpaceAdd (_space,this);
@@ -765,15 +778,62 @@ unsigned long dGeomGetCollideBits (dxGeom *g)
 
 void dGeomEnable (dxGeom *g)
 {
+    // RVA 0x600530 - retruxx: an enabled geom joins its space's list of enabled geoms.
     dAASSERT (g);
+    if (g->gflags & GEOM_ENABLED) return;
     g->gflags |= GEOM_ENABLED;
+    if (g->parent_space) g->spaceAddEnabled (&g->parent_space->first_enabled);
 }
 
 void dGeomDisable (dxGeom *g)
 {
+    // retruxx: see dGeomEnable.
     dAASSERT (g);
     g->gflags &= ~GEOM_ENABLED;
+    g->spaceRemoveEnabled();
 }
+
+void dGeomSetMovedCallback (dxGeom *g, void (*callback)(dGeomID))
+{
+    // retruxx: called by dGeomMoved with the geom that moved
+    dAASSERT (g);
+    g->moved_callback = callback;
+}
+
+
+dGeomID dGeomGetParentTransform (dxGeom *g)
+{
+    // retruxx: RVA 0x600620
+    dAASSERT (g);
+    return g->parent_transform;
+}
+
+
+void dGeomUnlinkFromBody (dxGeom *g)
+{
+    // retruxx: RVA 0x6005E0
+    dAASSERT (g);
+    g->gflags |= GEOM_BODY_UNLINKED;
+}
+
+
+void dGeomLinkToBody (dxGeom *g)
+{
+    // retruxx: RVA 0x6005F0
+    dAASSERT (g);
+    g->gflags &= ~GEOM_BODY_UNLINKED;
+}
+
+
+dBodyID dGeomGetLinkedBody (dxGeom *g)
+{
+    // retruxx: RVA 0x600600 - contacts with an unlinked geom are attached to the static
+    // environment instead of its body.
+    dAASSERT (g);
+    if (g->gflags & GEOM_BODY_UNLINKED) return 0;
+    return g->body;
+}
+
 
 int dGeomIsEnabled (dxGeom *g)
 {

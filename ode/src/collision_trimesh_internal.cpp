@@ -738,6 +738,18 @@ int dGeomTriMeshGetTriangleCount(dGeomID g)
 
 
 /*extern ODE_API */
+void dGeomTriMeshGetInfo(dGeomID g, int *numTriangles, int *numVertices)
+{
+    // retruxx: the triangle and vertex counts of the mesh
+    dUASSERT(g && g->type == dTriMeshClass, "The argument is not a trimesh");
+
+    const dxTriMesh *mesh = static_cast<dxTriMesh *>(g);
+    *numTriangles = mesh->getMeshTriangleCount();
+    *numVertices = mesh->retrieveMeshData()->retrieveVertexCount();
+}
+
+
+/*extern ODE_API */
 void dGeomTriMeshGetTriangle(dGeomID g, int index, dVector3 *v0/*=NULL*/, dVector3 *v1/*=NULL*/, dVector3 *v2/*=NULL*/)
 {
     dUASSERT(g && g->type == dTriMeshClass, "The argument is not a trimesh");

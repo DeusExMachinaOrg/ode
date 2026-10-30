@@ -82,6 +82,9 @@ enum {
     GEOM_ENABLE_TEST_MASK = GEOM_ENABLED | GEOM_ZERO_SIZED,
     GEOM_ENABLE_TEST_VALUE = GEOM_ENABLED,
 
+    // retruxx: contacts with the geom do not attach its body (see dGeomGetLinkedBody)
+    GEOM_BODY_UNLINKED = 0x1000,
+
     // Ray specific
     RAY_FIRSTCONTACT = 0x10000,
     RAY_BACKFACECULL = 0x20000,
@@ -117,6 +120,12 @@ struct dxGeom : public dBase {
     dxSpace *parent_space;// the space this geom is contained in, 0 if none
     dReal aabb[6];	// cached AABB for this space
     unsigned long category_bits,collide_bits;
+
+    // retruxx
+    dxGeom *parent_transform;	// the geom transform that encapsulates this geom, 0 if none
+    void (*moved_callback)(dGeomID);	// called by dGeomMoved
+    dxGeom *next_enabled;	// next geom in the parent space's list of enabled geoms
+    dxGeom **tome_enabled;	// backpointer in that list, 0 if the geom is not in it
 
     dxGeom (dSpaceID _space, int is_placeable);
     virtual ~dxGeom();
@@ -197,6 +206,21 @@ struct dxGeom : public dBase {
         *tome = next;
     }
 
+    // retruxx: add and remove this geom from its space's list of enabled geoms. Like spaceRemove, a removal
+    // keeps next_enabled, so a loop over the list goes on when a callback disables the geom it is at.
+    void spaceAddEnabled (dxGeom **first_ptr) {
+        next_enabled = *first_ptr;
+        tome_enabled = first_ptr;
+        if (*first_ptr) (*first_ptr)->tome_enabled = &next_enabled;
+        *first_ptr = this;
+    }
+    void spaceRemoveEnabled() {
+        if (!tome_enabled) return;
+        if (next_enabled) next_enabled->tome_enabled = tome_enabled;
+        *tome_enabled = next_enabled;
+        tome_enabled = 0;
+    }
+
     // add and remove this geom from a linked list maintained by a body.
 
     void bodyAdd (dxBody *b) {
@@ -227,6 +251,10 @@ struct dxGeom : public dBase {
 struct dxSpace : public dxGeom {
     int count;			// number of geoms in this space
     dxGeom *first;		// first geom in list
+    // retruxx: the enabled geoms, also linked through next_enabled. As in the shipped ODE 0.5, which kept
+    // enabled and disabled geoms apart, collisions visit only these: the game's global space holds tens of
+    // thousands of geoms, almost all of them disabled.
+    dxGeom *first_enabled;
     int cleanup;			// cleanup mode, 1=destroy geoms on exit
     int sublevel;         // space sublevel (used in dSpaceCollide2). NOT TRACKED AUTOMATICALLY!!!
     unsigned tls_kind;	// space TLS kind to be used for global caches retrieval

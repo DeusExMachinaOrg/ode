@@ -52,7 +52,16 @@ enum {
     dxBodyLinearDamping =             32, // use linear damping
     dxBodyAngularDamping =            64, // use angular damping
     dxBodyMaxAngularSpeed =           128,// use maximum angular speed
-    dxBodyGyroscopic =                256 // use gyroscopic term
+    dxBodyGyroscopic =                256,// use gyroscopic term
+    // retruxx: the game's own velocity damping, applied in dxStepBody (bit 16 of the flags in the
+    // shipped build). It is unrelated to dxBodyLinearDamping/dxBodyAngularDamping.
+    dxBodyRetruxxDamping =            0x10000
+};
+
+// retruxx: the game's velocity damping. Each step scales a velocity by (1 - damping * stepsize).
+struct dxRetruxxDamping {
+    dReal linear;
+    dReal angular;
 };
 
 
@@ -158,12 +167,17 @@ struct dxBody : public dObject {
     dxDampingParameters dampingp; // damping parameters, depends on flags
     dReal max_angular_speed;      // limit the angular velocity to this magnitude
 
+    // retruxx
+    void (*change_enabled_state_callback)(dxBody*); // called when the body is enabled or disabled
+    dxRetruxxDamping retruxx_damping; // the game's damping, used with dxBodyRetruxxDamping
+
     dxBody(dxWorld *w);
 };
 
 
 struct dxWorld : public dBase, public dxThreadingBase, private dxIThreadingDefaultImplProvider {
-    dxBody *firstbody;		// body linked list
+    dxBody *firstbody;		// body linked list (retruxx: of the enabled bodies)
+    dxBody *first_disabled_body; // retruxx: the disabled bodies, kept apart as in the shipped ODE 0.5
     dxJoint *firstjoint;		// joint linked list
     int nb,nj;			// number of bodies and joints in lists
     dVector3 gravity;		// gravity vector (m/s/s)
@@ -180,6 +194,10 @@ struct dxWorld : public dBase, public dxThreadingBase, private dxIThreadingDefau
     dxContactParameters contactp;
     dxDampingParameters dampingp; // damping parameters
     dReal max_angular_speed;      // limit the angular velocity to this magnitude
+
+    // retruxx: the game's damping, copied into every new body
+    int retruxx_damping_flag;
+    dxRetruxxDamping retruxx_damping;
 
     void* userdata;
 

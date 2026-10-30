@@ -710,6 +710,11 @@ ODE_API int dWorldGetAutoDisableFlag (dWorldID);
  */
 ODE_API void dWorldSetAutoDisableFlag (dWorldID, int do_auto_disable);
 
+/* retruxx: the game's velocity damping, copied into bodies created afterwards. Each step scales a
+   body's velocities by (1 - damping * stepsize); it is unrelated to dWorldSetLinearDamping. */
+ODE_API void dWorldSetDampingFlag (dWorldID w, int do_damping);
+ODE_API void dWorldSetDampingParameters (dWorldID w, dReal linearDamping, dReal angularDamping);
+
 
 /**
  * @defgroup damping Damping
@@ -1432,6 +1437,25 @@ ODE_API int dBodyGetGravityMode (dBodyID b);
  * @ingroup bodies
  */
 ODE_API void dBodySetMovedCallback(dBodyID b, void (*callback)(dBodyID));
+
+/* retruxx: extensions of the game's ODE */
+
+/* Sets a function called when the body is enabled or disabled, including by auto-disable and by
+   being pulled into an island that is stepped. */
+ODE_API void dBodySetChangeEnabledStateCallback (dBodyID b, void (*callback)(dBodyID));
+/* Detaches the body's contact joints from both their bodies. */
+ODE_API void dBodyDetachAllContactJoints (dBodyID b);
+/* Move a body that is in no world, or out of its world, together with every body joined to it
+   other than through contact joints. Removing destroys the contact joints outside joint groups. */
+ODE_API void dBodyAddIslandToWorld (dBodyID b, dWorldID w);
+ODE_API void dBodyRemoveIslandFromWorld (dBodyID b);
+/* The body's flags as the shipped game saves them: ODE 0.5's bits (finite rotation 1 and 2,
+   disabled 4, no gravity 8, auto-disable 16) and the game's damping (0x10000). The bits ODE 0.16
+   added are left out. */
+ODE_API int dBodyGetFlags (dBodyID b);
+/* What is left of the auto-disable countdown: the idle time and steps still needed. */
+ODE_API dReal dBodyGetAutoDisableTimeLeft (dBodyID b);
+ODE_API int dBodyGetAutoDisableStepsLeft (dBodyID b);
 
 
 /**

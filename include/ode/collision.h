@@ -404,6 +404,18 @@ ODE_API void dGeomDisable (dGeomID geom);
  */
 ODE_API int dGeomIsEnabled (dGeomID geom);
 
+/* retruxx: extensions of the game's ODE */
+
+/* Sets a function called by dGeomMoved with the geom that moved. */
+ODE_API void dGeomSetMovedCallback (dGeomID geom, void (*callback)(dGeomID));
+/* Returns the geom transform that encapsulates the geom, 0 if none. */
+ODE_API dGeomID dGeomGetParentTransform (dGeomID geom);
+/* An unlinked geom keeps its body, but contacts with it are attached to the static environment:
+   dGeomGetLinkedBody returns 0 for it. */
+ODE_API void dGeomUnlinkFromBody (dGeomID geom);
+ODE_API void dGeomLinkToBody (dGeomID geom);
+ODE_API dBodyID dGeomGetLinkedBody (dGeomID geom);
+
 
 enum
 {
@@ -885,6 +897,7 @@ enum {
   dGeomTransformClass,
   dTriMeshClass,
   dHeightfieldClass,
+  dTerrainYClass,       /* retruxx: the game's height-map terrain, see dCreateTerrainY */
 
   dFirstSpaceClass,
   dSimpleSpaceClass = dFirstSpaceClass,
@@ -918,6 +931,12 @@ enum {
  * @sa dGeomSphereSetRadius
  * @ingroup collide_sphere
  */
+/* retruxx: the game's height-map terrain, with y up. pHeights holds nNumNodesPerSide (a power of
+   two) squared heights spaced vLength / nNumNodesPerSide apart; they are copied. It collides with
+   spheres, boxes, capsules and rays. */
+ODE_API dGeomID dCreateTerrainY (dSpaceID space, dReal *pHeights, dReal vLength, int nNumNodesPerSide, int bFinite, int bPlaceable);
+ODE_API dReal dGeomTerrainYPointDepth (dGeomID g, dReal x, dReal y, dReal z);
+
 ODE_API dGeomID dCreateSphere (dSpaceID space, dReal radius);
 
 

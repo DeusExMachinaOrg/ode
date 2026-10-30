@@ -518,7 +518,8 @@ void dWorldExportDIF (dWorldID w, FILE *file, const char *prefix)
     // bodies
     int num = 0;
     fprintf (file,"%sbody = {}\n",prefix);
-    for (dxBody *b=w->firstbody; b; b=(dxBody*)b->next) {
+    for (int list = 0; list < 2; list++) // retruxx: the enabled bodies, then the disabled ones
+    for (dxBody *b = list ? w->first_disabled_body : w->firstbody; b; b=(dxBody*)b->next) {
         b->tag = num;
         fprintf (file,"%sbody[%d] = dynamics.body {\n\tworld = %sworld,\n",prefix,num,prefix);
         c.indent++;

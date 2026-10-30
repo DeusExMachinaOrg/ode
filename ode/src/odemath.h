@@ -35,11 +35,11 @@ bool dxSafeNormalize4 (dVector4 a);
 ODE_PURE_INLINE 
 void dxNormalize3(dVector3 a)
 {
-    bool bSafeNormalize3Fault;
-    if ((bSafeNormalize3Fault = !dxSafeNormalize3(a)))
+    // retruxx: as in the shipped ODE 0.5, a zero-length (or NaN) vector quietly becomes the x axis. The
+    // game feeds such vectors in, for example a zero rotation to dBodySetQuaternion, and 0.16 stops on
+    // them in a debug build.
+    if (!dxSafeNormalize3(a))
     {
-        dIVERIFY(!bSafeNormalize3Fault);
-
         a[0] = REAL(1.0); a[2] = a[1] = REAL(0.0);
     }
 }
@@ -47,11 +47,10 @@ void dxNormalize3(dVector3 a)
 ODE_PURE_INLINE 
 void dxNormalize4(dVector4 a)
 {
-    bool bSafeNormalize4Fault;
-    if ((bSafeNormalize4Fault = !dxSafeNormalize4(a)))
+    // retruxx: as in the shipped ODE 0.5, a zero-length (or NaN) quaternion quietly becomes the
+    // identity, see dxNormalize3.
+    if (!dxSafeNormalize4(a))
     {
-        dIVERIFY(!bSafeNormalize4Fault);
-
         a[0] = REAL(1.0); a[3] = a[2] = a[1] = REAL(0.0);
     }
 }

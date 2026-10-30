@@ -217,6 +217,10 @@ public:
   void *getData() const
     { return dBodyGetData (get_id()); }
 
+  // retruxx
+  void setChangeEnabledStateCallback (void (*callback)(dBodyID))
+    { dBodySetChangeEnabledStateCallback (get_id(), callback); }
+
   void setPosition (dReal x, dReal y, dReal z)
     { dBodySetPosition (get_id(), x, y, z); }
   void setPosition (const dVector3 p)

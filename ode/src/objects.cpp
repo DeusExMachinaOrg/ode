@@ -100,14 +100,11 @@ dxWorld::dxWorld():
     contactp(NULL),
     dampingp(NULL),
     max_angular_speed(dInfinity),
-    retruxx_damping_flag(0),
     userdata(0)
 {
     dxThreadingBase::setThreadingDefaultImplProvider(this);
 
     dSetZero (gravity, 4);
-    retruxx_damping.linear = 0;
-    retruxx_damping.angular = 0;
 }
 
 dxWorld::~dxWorld()

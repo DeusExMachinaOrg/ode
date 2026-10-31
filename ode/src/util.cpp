@@ -511,14 +511,14 @@ void dxStepBody (dxBody *b, dReal h)
     for (unsigned int j=0; j<3; j++) {
         if (std::isnan(b->lvel[j]) || !std::isfinite(b->lvel[j]) || dFabs(b->lvel[j]) > REAL(1000.0))
             b->lvel[j] = (j == 1) ? REAL(0.1) : REAL(0.0);
-        if (b->flags & dxBodyRetruxxDamping)
-            b->lvel[j] = (REAL(1.0) - b->retruxx_damping.linear * h) * b->lvel[j];
+        if (b->flags & dxBodySpecialDamping)
+            b->lvel[j] = (REAL(1.0) - b->dampingp.linear_scale * h) * b->lvel[j];
     }
     for (unsigned int j=0; j<3; j++) {
         if (std::isnan(b->avel[j]) || !std::isfinite(b->avel[j]) || dFabs(b->avel[j]) > REAL(1000.0))
             b->avel[j] = 0;
-        if (b->flags & dxBodyRetruxxDamping)
-            b->avel[j] = (REAL(1.0) - b->retruxx_damping.angular * h) * b->avel[j];
+        if (b->flags & dxBodySpecialDamping)
+            b->avel[j] = (REAL(1.0) - b->dampingp.angular_scale * h) * b->avel[j];
     }
 
     // handle linear velocity

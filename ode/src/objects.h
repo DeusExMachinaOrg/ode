@@ -53,15 +53,11 @@ enum {
     dxBodyAngularDamping =            64, // use angular damping
     dxBodyMaxAngularSpeed =           128,// use maximum angular speed
     dxBodyGyroscopic =                256,// use gyroscopic term
-    // retruxx: the game's own velocity damping, applied in dxStepBody (bit 16 of the flags in the
-    // shipped build). It is unrelated to dxBodyLinearDamping/dxBodyAngularDamping.
-    dxBodyRetruxxDamping =            0x10000
-};
-
-// retruxx: the game's velocity damping. Each step scales a velocity by (1 - damping * stepsize).
-struct dxRetruxxDamping {
-    dReal linear;
-    dReal angular;
+    // retruxx: the game's own velocity damping (bit 16 of the flags in the shipped build), applied in
+    // dxStepBody: each step scales a velocity by (1 - scale * stepsize), with the scales of dampingp. It
+    // is unrelated to dxBodyLinearDamping/dxBodyAngularDamping, which the game never sets, so ODE's own
+    // damping stays off and dampingp holds only the game's scales.
+    dxBodySpecialDamping =            0x10000
 };
 
 
@@ -169,7 +165,6 @@ struct dxBody : public dObject {
 
     // retruxx
     void (*change_enabled_state_callback)(dxBody*); // called when the body is enabled or disabled
-    dxRetruxxDamping retruxx_damping; // the game's damping, used with dxBodyRetruxxDamping
 
     dxBody(dxWorld *w);
 };
@@ -194,10 +189,6 @@ struct dxWorld : public dBase, public dxThreadingBase, private dxIThreadingDefau
     dxContactParameters contactp;
     dxDampingParameters dampingp; // damping parameters
     dReal max_angular_speed;      // limit the angular velocity to this magnitude
-
-    // retruxx: the game's damping, copied into every new body
-    int retruxx_damping_flag;
-    dxRetruxxDamping retruxx_damping;
 
     void* userdata;
 

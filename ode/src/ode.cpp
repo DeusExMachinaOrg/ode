@@ -290,9 +290,9 @@ dxBody *dBodyCreate (dxWorld *w)
 
     b->flags |= dxBodyGyroscopic;
 
-    // retruxx: the shipped build copies the world's damping into every new body
-    b->retruxx_damping = w->retruxx_damping;
-    if (w->retruxx_damping_flag) b->flags |= dxBodyRetruxxDamping;
+    // retruxx: the shipped build copies the world's damping into every new body (its scales came with
+    // dBodySetDampingDefaults)
+    b->flags |= w->body_flags & dxBodySpecialDamping;
     b->change_enabled_state_callback = NULL;
 
     return b;
@@ -2038,9 +2038,10 @@ int dWorldGetAutoDisableFlag (dWorldID w)
 
 void dWorldSetDampingFlag (dWorldID w, int do_damping)
 {
-    // retruxx: the game's damping (see dxBodyRetruxxDamping), for bodies created afterwards
+    // retruxx: the game's damping (see dxBodySpecialDamping), for bodies created afterwards
     dAASSERT(w);
-    w->retruxx_damping_flag = do_damping;
+    if (do_damping) w->body_flags |= dxBodySpecialDamping;
+    else w->body_flags &= ~dxBodySpecialDamping;
 }
 
 
@@ -2048,8 +2049,8 @@ void dWorldSetDampingParameters (dWorldID w, dReal linearDamping, dReal angularD
 {
     // retruxx: see dWorldSetDampingFlag
     dAASSERT(w);
-    w->retruxx_damping.linear = linearDamping;
-    w->retruxx_damping.angular = angularDamping;
+    w->dampingp.linear_scale = linearDamping;
+    w->dampingp.angular_scale = angularDamping;
 }
 
 
@@ -2438,7 +2439,7 @@ int dBodyGetFlags (dBodyID b)
 {
     dAASSERT(b);
     return (int) (b->flags & (dxBodyFlagFiniteRotation | dxBodyFlagFiniteRotationAxis | dxBodyDisabled |
-        dxBodyNoGravity | dxBodyAutoDisable | dxBodyRetruxxDamping));
+        dxBodyNoGravity | dxBodyAutoDisable | dxBodySpecialDamping));
 }
 
 

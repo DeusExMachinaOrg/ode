@@ -615,10 +615,13 @@ void dxStepBody (dxBody *b, dReal h)
     dQtoR (b->q,b->posr.R);
 
     // notify all attached geoms that this body has moved
+    // retruxx: without their moved callbacks, which the steppers call after the step (dxCallGeomMovedCallbacks),
+    // so that the game's callbacks run once the step is over, on the stepping thread, and not on the island threads
+    // under this lock.
     dxWorldProcessContext *world_process_context = b->world->unsafeGetWorldProcessingContext(); 
     for (dxGeom *geom = b->geom; geom; geom = dGeomGetBodyNext (geom)) {
         world_process_context->LockForStepbodySerialization();
-        dGeomMoved (geom);
+        dxGeomMarkMoved (geom);
         world_process_context->UnlockForStepbodySerialization();
     }
 
@@ -875,6 +878,21 @@ static void UntagIslands(const dxWorldProcessIslandsInfo &islandsInfo)
     for (sizeint i = 0; i != jointCount; ++i) islandJoints[i]->tag = 0;
 }
 
+// retruxx: the moved callbacks of the stepped bodies' geoms, which dxStepBody leaves out. They come once the islands
+// are stepped, on the stepping thread, in the islands' order.
+// NOTE: the shipped ODE 0.5 calls them from dGeomMoved while it steps each body.
+static void CallIslandsMovedCallbacks(const dxWorldProcessIslandsInfo &islandsInfo)
+{
+    const unsigned int *islandSizes = islandsInfo.GetIslandSizes();
+    const sizeint islandsCount = islandsInfo.GetIslandsCount();
+    sizeint bodyCount = 0;
+    for (sizeint i = 0; i != islandsCount; ++i) {
+        bodyCount += islandSizes[i * dxISE__MAX + dxISE_BODIES_COUNT];
+    }
+    dxBody *const *islandBodies = islandsInfo.GetBodiesArray();
+    for (sizeint i = 0; i != bodyCount; ++i) dxCallGeomMovedCallbacks(islandBodies[i]);
+}
+
 // retruxx: groups dWorldHybridStep's islands into chunks. Each island of at least largeMinBodies bodies is a chunk
 // of its own, and these come first, so the longest steps start first. The other islands are grouped in order into
 // chunks of at least chunkMinBodies bodies, a large island between them closing the chunk before it.
@@ -1006,6 +1024,7 @@ bool dxProcessIslands (dxWorld *world, const dxWorldProcessIslandsInfo &islandsI
     while (false);
 
     UntagIslands(islandsInfo); // retruxx
+    CallIslandsMovedCallbacks(islandsInfo); // retruxx: also after a failed step, for the islands it got through
 
     return result;
 }
@@ -1069,6 +1088,7 @@ bool dxProcessIslandsHybrid (dxWorld *world, const dxWorldProcessIslandsInfo &is
     while (false);
 
     UntagIslands(islandsInfo);
+    CallIslandsMovedCallbacks(islandsInfo);
 
     return result;
 }

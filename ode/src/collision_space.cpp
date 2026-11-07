@@ -49,8 +49,15 @@ spaces
 void dGeomMoved (dxGeom *geom)
 {
     dAASSERT (geom);
-    dxGeom *moved = geom; // retruxx
+    dxGeomMarkMoved (geom);
 
+    // retruxx: let the game know the geom moved
+    if (geom->moved_callback) geom->moved_callback (geom);
+}
+
+// retruxx: dGeomMoved's marking, without the callback
+void dxGeomMarkMoved (dxGeom *geom)
+{
     // if geom is offset, mark it as needing a calculate
     if (geom->offset_posr) {
         geom->gflags |= GEOM_POSR_BAD;
@@ -73,9 +80,14 @@ void dGeomMoved (dxGeom *geom)
         geom->markAABBBad();
         geom = geom->parent_space;
     }
+}
 
-    // retruxx: let the game know the geom moved
-    if (moved->moved_callback) moved->moved_callback (moved);
+// retruxx
+void dxCallGeomMovedCallbacks (dxBody *body)
+{
+    for (dxGeom *geom = body->geom; geom; geom = dGeomGetBodyNext (geom)) {
+        if (geom->moved_callback) geom->moved_callback (geom);
+    }
 }
 
 #define GEOM_ENABLED(g) (((g)->gflags & GEOM_ENABLE_TEST_MASK) == GEOM_ENABLE_TEST_VALUE)

@@ -183,6 +183,8 @@ struct dxWorld : public dBase, public dxThreadingBase, private dxIThreadingDefau
     unsigned islands_max_threads; // maximum threads to allocate for island processing
     unsigned stepping_max_threads; // maximum threads to allocate for stepping each island
     unsigned solving_max_threads; // maximum threads to allocate for solving equation systems
+    unsigned hybrid_quickstep_min_bodies; // retruxx: dWorldHybridStep's island size that takes QuickStep
+    unsigned islands_chunk_min_bodies; // retruxx: dWorldHybridStep's bodies per chunk of small islands
     dxStepWorkingMemory *wmem; // Working memory object for dWorldStep/dWorldQuickStep
 
     dxQuickStepParameters qs;

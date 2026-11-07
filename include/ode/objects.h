@@ -141,6 +141,8 @@ enum
     dWSTP_WorldIslandsIterationMaxThreads = 0x001,      /**< Thread count limit for parallel island iteration */
     dWSTP_IslandSteppingMaxThreads = 0x002,      /**< Thread count limit for stepping each individual island being iterated */
     dWSTP_LCPSolvingMaxThreads = 0x004,      /**< Thread count limit for solving QuickStep/Step LCP */
+    dWSTP_HybridQuickStepMinBodies = 0x008,  /**< retruxx: dWorldHybridStep's island size that takes QuickStep */
+    dWSTP_IslandsChunkMinBodies = 0x010,     /**< retruxx: dWorldHybridStep's bodies per chunk of islands */
 };
 
 
@@ -151,6 +153,10 @@ typedef struct dWorldSteppingThreadingParameters
     unsigned   world_islands_iteration_max_threads;
     unsigned   island_stepping_max_threads;
     unsigned   lcp_solving_max_threads;
+
+    /* retruxx: dWorldHybridStep only */
+    unsigned   hybrid_quickstep_min_bodies; /**< An island of at least this many bodies takes QuickStep, a smaller one the exact step (default 25) */
+    unsigned   islands_chunk_min_bodies; /**< Small islands go to the threads in chunks of at least this many bodies (default 16); 0 or 1 gives each island its own */
 
 } dWorldSteppingThreadingParameters;
 
@@ -496,6 +502,27 @@ ODE_API int dWorldStep (dWorldID w, dReal stepsize);
  * @ingroup world
  */
 ODE_API int dWorldQuickStep (dWorldID w, dReal stepsize);
+
+/**
+ * @brief retruxx: Step the world, each island with the stepper its size calls for.
+ *
+ * An island of at least @p dWorldSteppingThreadingParameters::hybrid_quickstep_min_bodies bodies
+ * is stepped as by @fn dWorldQuickStep, with the world's stepping and LCP thread limits; a smaller one
+ * as by @fn dWorldStep, on one thread.
+ *
+ * Islands go to the threads in chunks: each QuickStep island is a chunk of its own, and the small islands
+ * are grouped, in order, into chunks of at least @p dWorldSteppingThreadingParameters::islands_chunk_min_bodies
+ * bodies. A thread steps a chunk's islands one after another, and no more threads are started than there
+ * are chunks, so a few small islands are not spread over many threads. The QuickStep chunks come first.
+ *
+ * @param w The world to be stepped
+ * @param stepsize The number of seconds that the simulation has to advance.
+ * @returns 1 for success and 0 for failure
+ *
+ * @ingroup world
+ * @see dWorldSetSteppingThreadingParameters
+ */
+ODE_API int dWorldHybridStep (dWorldID w, dReal stepsize);
 
 
 /**

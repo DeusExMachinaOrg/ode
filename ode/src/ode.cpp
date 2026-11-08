@@ -1741,6 +1741,17 @@ void dWorldSetSteppingThreadingParameters(dWorldID w, const dWorldSteppingThread
     {
         w->solving_max_threads = ptr_params->lcp_solving_max_threads;
     }
+
+    // retruxx
+    if ((param_set & dWSTP_HybridQuickStepMinBodies) != 0)
+    {
+        w->hybrid_quickstep_min_bodies = ptr_params->hybrid_quickstep_min_bodies;
+    }
+
+    if ((param_set & dWSTP_IslandsChunkMinBodies) != 0)
+    {
+        w->islands_chunk_min_bodies = ptr_params->islands_chunk_min_bodies;
+    }
 }
 
 void dWorldGetSteppingThreadingParameters(dWorldID w, dWorldSteppingThreadingParameters *ptr_params)
@@ -1760,6 +1771,17 @@ void dWorldGetSteppingThreadingParameters(dWorldID w, dWorldSteppingThreadingPar
     if ((param_set & dWSTP_LCPSolvingMaxThreads) != 0)
     {
         ptr_params->lcp_solving_max_threads = w->solving_max_threads;
+    }
+
+    // retruxx
+    if ((param_set & dWSTP_HybridQuickStepMinBodies) != 0)
+    {
+        ptr_params->hybrid_quickstep_min_bodies = w->hybrid_quickstep_min_bodies;
+    }
+
+    if ((param_set & dWSTP_IslandsChunkMinBodies) != 0)
+    {
+        ptr_params->islands_chunk_min_bodies = w->islands_chunk_min_bodies;
     }
 }
 
@@ -1935,6 +1957,36 @@ int dWorldQuickStep (dWorldID w, dReal stepsize)
     if (dxReallocateWorldProcessContext (w, islandsinfo, stepsize, &dxEstimateQuickStepMemoryRequirements))
     {
         if (dxProcessIslands (w, islandsinfo, stepsize, &dxQuickStepIsland, &dxEstimateQuickStepMaxCallCount))
+        {
+            result = true;
+        }
+    }
+
+    return result;
+}
+
+// retruxx
+int dWorldHybridStep (dWorldID w, dReal stepsize)
+{
+    dUASSERT (w,"bad world argument");
+    dUASSERT (stepsize > 0,"stepsize must be > 0");
+
+    dxHybridSteppers steppers;
+    steppers.m_smallStepper = &dxStepIsland;
+    steppers.m_smallMemEstimate = &dxEstimateStepMemoryRequirements;
+    steppers.m_smallMaxCallCount = &dxEstimateStepMaxCallCount;
+    steppers.m_largeStepper = &dxQuickStepIsland;
+    steppers.m_largeMemEstimate = &dxEstimateQuickStepMemoryRequirements;
+    steppers.m_largeMaxCallCount = &dxEstimateQuickStepMaxCallCount;
+    steppers.m_largeMinBodies = w->hybrid_quickstep_min_bodies;
+    steppers.m_chunkMinBodies = w->islands_chunk_min_bodies;
+
+    bool result = false;
+
+    dxWorldProcessIslandsInfo islandsinfo;
+    if (dxReallocateWorldProcessContextHybrid (w, islandsinfo, stepsize, steppers))
+    {
+        if (dxProcessIslandsHybrid (w, islandsinfo, stepsize, steppers))
         {
             result = true;
         }

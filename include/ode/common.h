@@ -528,6 +528,13 @@ typedef struct dJointFeedback {
  */
 
 void dGeomMoved (dGeomID);
+
+// retruxx: dGeomMoved without the moved callback, for dxStepBody; the steppers call the callbacks of the step's
+// bodies after it, on the stepping thread (dxCallGeomMovedCallbacks)
+void dxGeomMarkMoved (dGeomID);
+// retruxx: calls the moved callbacks of the body's geoms
+void dxCallGeomMovedCallbacks (dBodyID);
+
 dGeomID dGeomGetBodyNext (dGeomID);
 
 /**

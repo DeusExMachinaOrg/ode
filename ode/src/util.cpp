@@ -385,8 +385,8 @@ struct dxSingleIslandCallContext
     dxSingleIslandCallContext(dxIslandsProcessingCallContext *islandsProcessingContext, 
         dxWorldProcessMemArena *stepperArena, void *arenaInitialState, 
         dxBody *const *islandBodiesStart, dxJoint *const *islandJointsStart):
-        m_islandsProcessingContext(islandsProcessingContext), m_islandIndex(0), 
-        m_stepperArena(stepperArena), m_arenaInitialState(arenaInitialState), 
+        m_islandsProcessingContext(islandsProcessingContext), m_islandIndex(0), m_chunkEnd(0),
+        m_stepperArena(stepperArena), m_arenaInitialState(arenaInitialState),
         m_stepperCallContext(islandsProcessingContext->m_world, islandsProcessingContext->m_stepSize, 
             islandsProcessingContext->m_stepperAllowedThreads, islandsProcessingContext->m_lcpAllowedThreads, stepperArena, islandBodiesStart, islandJointsStart)
     {
@@ -418,9 +418,37 @@ struct dxSingleIslandCallContext
 
     dxIslandsProcessingCallContext  *m_islandsProcessingContext;
     sizeint                          m_islandIndex;
+    sizeint                          m_chunkEnd; // retruxx: dWorldHybridStep's end of the chunk being stepped
     dxWorldProcessMemArena          *m_stepperArena;
     void                            *m_arenaInitialState;
     dxStepperProcessingCallContext  m_stepperCallContext;
+};
+
+
+// retruxx: dWorldHybridStep's islands processing. Each job claims a chunk at a time and steps its islands in turn,
+// each with the stepper its size calls for.
+struct dxHybridIslandsProcessingCallContext:
+    public dxIslandsProcessingCallContext
+{
+    dxHybridIslandsProcessingCallContext(dxWorld *world, const dxWorldProcessIslandsInfo &islandsInfo, dReal stepSize,
+        const dxHybridSteppers &steppers):
+        dxIslandsProcessingCallContext(world, islandsInfo, stepSize, NULL), m_steppers(steppers), m_chunkToProcessStorage(0)
+    {
+    }
+
+    static int ThreadedProcessJobStart_Callback(void *callContext, dcallindex_t callInstanceIndex, dCallReleaseeID callThisReleasee);
+    void ThreadedProcessJobStart();
+
+    static int ThreadedProcessIslandSearch_Callback(void *callContext, dcallindex_t callInstanceIndex, dCallReleaseeID callThisReleasee);
+    void ThreadedProcessIslandSearch(dxSingleIslandCallContext *stepperCallContext);
+
+    static int ThreadedProcessIslandStepper_Callback(void *callContext, dcallindex_t callInstanceIndex, dCallReleaseeID callThisReleasee);
+    void ThreadedProcessIslandStepper(dxSingleIslandCallContext *stepperCallContext);
+
+    void FinalizeJob(dxSingleIslandCallContext *stepperCallContext);
+
+    dxHybridSteppers const          &m_steppers;
+    volatile sizeint                m_chunkToProcessStorage;
 };
 
 
@@ -587,10 +615,13 @@ void dxStepBody (dxBody *b, dReal h)
     dQtoR (b->q,b->posr.R);
 
     // notify all attached geoms that this body has moved
+    // retruxx: without their moved callbacks, which the steppers call after the step (dxCallGeomMovedCallbacks),
+    // so that the game's callbacks run once the step is over, on the stepping thread, and not on the island threads
+    // under this lock.
     dxWorldProcessContext *world_process_context = b->world->unsafeGetWorldProcessingContext(); 
     for (dxGeom *geom = b->geom; geom; geom = dGeomGetBodyNext (geom)) {
         world_process_context->LockForStepbodySerialization();
-        dGeomMoved (geom);
+        dxGeomMarkMoved (geom);
         world_process_context->UnlockForStepbodySerialization();
     }
 
@@ -631,9 +662,14 @@ enum dxISLANDSIZESELEMENT
 };
 
 // This estimates dynamic memory requirements for dxProcessIslands
-static sizeint EstimateIslandProcessingMemoryRequirements(dxWorld *world)
+// retruxx: withChunks adds room for dWorldHybridStep's chunks, at most one per island and so per body
+static sizeint EstimateIslandProcessingMemoryRequirements(dxWorld *world, bool withChunks = false)
 {
     sizeint res = 0;
+
+    if (withChunks) {
+        res += dEFFICIENT_SIZE((sizeint)(unsigned)world->nb * sizeof(dxIslandsChunk));
+    }
 
     sizeint islandcounts = dEFFICIENT_SIZE((sizeint)(unsigned)world->nb * 2 * sizeof(int));
     res += islandcounts;
@@ -658,9 +694,12 @@ static inline bool JointLeavesWorld(const dxJoint *j)
     return (j->node[0].body && !j->node[0].body->world) || (j->node[1].body && !j->node[1].body->world);
 }
 
+// retruxx: an island of at least largeMinBodies bodies is estimated with largeestimate, a smaller one with
+// stepperestimate (dWorldHybridStep's two steppers)
 static sizeint BuildIslandsAndEstimateStepperMemoryRequirements(
-    dxWorldProcessIslandsInfo &islandsinfo, dxWorldProcessMemArena *memarena, 
-    dxWorld *world, dReal stepsize, dmemestimate_fn_t stepperestimate)
+    dxWorldProcessIslandsInfo &islandsinfo, dxWorldProcessMemArena *memarena,
+    dxWorld *world, dReal stepsize, dmemestimate_fn_t stepperestimate,
+    dmemestimate_fn_t largeestimate, unsigned largeMinBodies)
 {
     sizeint maxreq = 0;
 
@@ -754,7 +793,8 @@ static sizeint BuildIslandsAndEstimateStepperMemoryRequirements(
                     sizescurr[dxISE_JOINTS_COUNT] = jcount;
                     sizescurr += dxISE__MAX;
 
-                    sizeint islandreq = stepperestimate(bodystart, bcount, jointstart, jcount);
+                    dmemestimate_fn_t islandestimate = bcount >= largeMinBodies ? largeestimate : stepperestimate; // retruxx
+                    sizeint islandreq = islandestimate(bodystart, bcount, jointstart, jcount);
                     maxreq = (maxreq > islandreq) ? maxreq : islandreq;
 
                     bodystart = bodycurr;
@@ -799,10 +839,10 @@ static sizeint BuildIslandsAndEstimateStepperMemoryRequirements(
     return maxreq;
 }
 
-static unsigned EstimateIslandProcessingSimultaneousCallsMaximumCount(unsigned activeThreadCount, unsigned islandsAllowedThreadCount, 
-    unsigned steppingAllowedThreadCount, unsigned lcpAllowedThreadCount, dmaxcallcountestimate_fn_t maxCallCountEstimator)
+// retruxx: split from the estimate below, for dWorldHybridStep's two steppers
+static unsigned EstimateIslandProcessingSimultaneousCallsMaximumCountForStepper(unsigned activeThreadCount, unsigned islandsAllowedThreadCount,
+    unsigned stepperCallsMaximum)
 {
-    unsigned stepperCallsMaximum = maxCallCountEstimator(activeThreadCount, steppingAllowedThreadCount, lcpAllowedThreadCount);
     unsigned islandsIntermediateCallsMaximum = (1 + 2); // ThreadedProcessIslandSearch_Callback + (ThreadedProcessIslandStepper_Callback && ThreadedProcessIslandSearch_Callback)
 
     unsigned result = 
@@ -811,6 +851,114 @@ static unsigned EstimateIslandProcessingSimultaneousCallsMaximumCount(unsigned a
         + dMIN(islandsAllowedThreadCount, (unsigned)(activeThreadCount - islandsAllowedThreadCount)) // ThreadedProcessJobStart_Callback
         /*...the end*/;
     return result;
+}
+
+static unsigned EstimateIslandProcessingSimultaneousCallsMaximumCount(unsigned activeThreadCount, unsigned islandsAllowedThreadCount,
+    unsigned steppingAllowedThreadCount, unsigned lcpAllowedThreadCount, dmaxcallcountestimate_fn_t maxCallCountEstimator)
+{
+    unsigned stepperCallsMaximum = maxCallCountEstimator(activeThreadCount, steppingAllowedThreadCount, lcpAllowedThreadCount);
+    return EstimateIslandProcessingSimultaneousCallsMaximumCountForStepper(activeThreadCount, islandsAllowedThreadCount, stepperCallsMaximum);
+}
+
+// retruxx: as in the shipped ODE 0.5, the bodies and joints of the islands are untagged after the step. Only
+// the enabled bodies are untagged before the islands are built, so a body that has been disabled since must
+// not keep its tag, or an enabled body touching it would no longer pull it into its island.
+static void UntagIslands(const dxWorldProcessIslandsInfo &islandsInfo)
+{
+    const unsigned int *islandSizes = islandsInfo.GetIslandSizes();
+    const sizeint islandsCount = islandsInfo.GetIslandsCount();
+    sizeint bodyCount = 0, jointCount = 0;
+    for (sizeint i = 0; i != islandsCount; ++i) {
+        bodyCount += islandSizes[i * dxISE__MAX + dxISE_BODIES_COUNT];
+        jointCount += islandSizes[i * dxISE__MAX + dxISE_JOINTS_COUNT];
+    }
+    dxBody *const *islandBodies = islandsInfo.GetBodiesArray();
+    for (sizeint i = 0; i != bodyCount; ++i) islandBodies[i]->tag = 0;
+    dxJoint *const *islandJoints = islandsInfo.GetJointsArray();
+    for (sizeint i = 0; i != jointCount; ++i) islandJoints[i]->tag = 0;
+}
+
+// retruxx: the moved callbacks of the stepped bodies' geoms, which dxStepBody leaves out. They come once the islands
+// are stepped, on the stepping thread, in the islands' order.
+// NOTE: the shipped ODE 0.5 calls them from dGeomMoved while it steps each body.
+static void CallIslandsMovedCallbacks(const dxWorldProcessIslandsInfo &islandsInfo)
+{
+    const unsigned int *islandSizes = islandsInfo.GetIslandSizes();
+    const sizeint islandsCount = islandsInfo.GetIslandsCount();
+    sizeint bodyCount = 0;
+    for (sizeint i = 0; i != islandsCount; ++i) {
+        bodyCount += islandSizes[i * dxISE__MAX + dxISE_BODIES_COUNT];
+    }
+    dxBody *const *islandBodies = islandsInfo.GetBodiesArray();
+    for (sizeint i = 0; i != bodyCount; ++i) dxCallGeomMovedCallbacks(islandBodies[i]);
+}
+
+// retruxx: groups dWorldHybridStep's islands into chunks. Each island of at least largeMinBodies bodies is a chunk
+// of its own, and these come first, so the longest steps start first. The other islands are grouped in order into
+// chunks of at least chunkMinBodies bodies, a large island between them closing the chunk before it.
+static void BuildIslandsChunks(dxWorldProcessIslandsInfo &islandsinfo, dxWorldProcessMemArena *memarena,
+    unsigned largeMinBodies, unsigned chunkMinBodies)
+{
+    const sizeint islandsCount = islandsinfo.GetIslandsCount();
+    if (islandsCount == 0) {
+        islandsinfo.AssignChunks(0, NULL);
+        return;
+    }
+
+    const unsigned int *islandSizes = islandsinfo.GetIslandSizes();
+    dxIslandsChunk *chunks = memarena->AllocateArray<dxIslandsChunk>(islandsCount);
+    sizeint chunksCount = 0;
+
+    // The large islands
+    {
+        sizeint bodiesOffset = 0, jointsOffset = 0;
+        for (sizeint island = 0; island != islandsCount; ++island) {
+            unsigned int bcount = islandSizes[island * dxISE__MAX + dxISE_BODIES_COUNT];
+            unsigned int jcount = islandSizes[island * dxISE__MAX + dxISE_JOINTS_COUNT];
+            if (bcount >= largeMinBodies) {
+                dxIslandsChunk &chunk = chunks[chunksCount++];
+                chunk.m_firstIsland = island;
+                chunk.m_endIsland = island + 1;
+                chunk.m_bodiesOffset = bodiesOffset;
+                chunk.m_jointsOffset = jointsOffset;
+            }
+            bodiesOffset += bcount;
+            jointsOffset += jcount;
+        }
+    }
+
+    // The small ones
+    {
+        sizeint bodiesOffset = 0, jointsOffset = 0;
+        dxIslandsChunk *open = NULL;
+        sizeint openBodies = 0;
+        for (sizeint island = 0; island != islandsCount; ++island) {
+            unsigned int bcount = islandSizes[island * dxISE__MAX + dxISE_BODIES_COUNT];
+            unsigned int jcount = islandSizes[island * dxISE__MAX + dxISE_JOINTS_COUNT];
+            if (bcount >= largeMinBodies) {
+                open = NULL;
+            }
+            else {
+                if (open == NULL) {
+                    open = &chunks[chunksCount++];
+                    open->m_firstIsland = island;
+                    open->m_bodiesOffset = bodiesOffset;
+                    open->m_jointsOffset = jointsOffset;
+                    openBodies = 0;
+                }
+                open->m_endIsland = island + 1;
+                openBodies += bcount;
+                if (openBodies >= chunkMinBodies) {
+                    open = NULL;
+                }
+            }
+            bodiesOffset += bcount;
+            jointsOffset += jcount;
+        }
+    }
+
+    dIASSERT(chunksCount != 0 && chunksCount <= islandsCount);
+    islandsinfo.AssignChunks(chunksCount, chunks);
 }
 
 // this groups all joints and bodies in a world into islands. all objects
@@ -875,22 +1023,72 @@ bool dxProcessIslands (dxWorld *world, const dxWorldProcessIslandsInfo &islandsI
     }
     while (false);
 
-    // retruxx: as in the shipped ODE 0.5, the bodies and joints of the islands are untagged after the step. Only
-    // the enabled bodies are untagged before the islands are built, so a body that has been disabled since must
-    // not keep its tag, or an enabled body touching it would no longer pull it into its island.
-    {
-        const unsigned int *islandSizes = islandsInfo.GetIslandSizes();
-        const sizeint islandsCount = islandsInfo.GetIslandsCount();
-        sizeint bodyCount = 0, jointCount = 0;
-        for (sizeint i = 0; i != islandsCount; ++i) {
-            bodyCount += islandSizes[i * dxISE__MAX + dxISE_BODIES_COUNT];
-            jointCount += islandSizes[i * dxISE__MAX + dxISE_JOINTS_COUNT];
+    UntagIslands(islandsInfo); // retruxx
+    CallIslandsMovedCallbacks(islandsInfo); // retruxx: also after a failed step, for the islands it got through
+
+    return result;
+}
+
+// retruxx: dWorldHybridStep's islands processing. As dxProcessIslands, except that no more jobs are started than
+// there are chunks, and a job claims a chunk at a time instead of an island.
+bool dxProcessIslandsHybrid (dxWorld *world, const dxWorldProcessIslandsInfo &islandsInfo,
+    dReal stepSize, const dxHybridSteppers &steppers)
+{
+    bool result = false;
+
+    dxHybridIslandsProcessingCallContext callContext(world, islandsInfo, stepSize, steppers);
+
+    do {
+        dxStepWorkingMemory *wmem = world->wmem;
+        dIASSERT(wmem != NULL);
+        dxWorldProcessContext *context = wmem->GetWorldProcessingContext();
+        dIASSERT(context != NULL);
+        dCallWaitID pcwGroupCallWait = context->GetIslandsSteppingWait();
+
+        int summaryFault = 0;
+
+        unsigned activeThreadCount;
+        const unsigned islandsAllowedThreadCount = world->calculateIslandIterationMaxThreadCount(&activeThreadCount);
+        dIASSERT(islandsAllowedThreadCount != 0);
+        dIASSERT(activeThreadCount >= islandsAllowedThreadCount);
+
+        unsigned stepperAllowedThreadCount = world->calculatePerIslandSteppingMaxThreadCount();
+        unsigned lcpAllowedThreadCount = world->calculatePerIslandSolvingMaxThreadCount();
+
+        // A small island is stepped on one thread
+        unsigned smallCallsMaximum = steppers.m_smallMaxCallCount(activeThreadCount, 1, 1);
+        unsigned largeCallsMaximum = steppers.m_largeMaxCallCount(activeThreadCount, stepperAllowedThreadCount, lcpAllowedThreadCount);
+        unsigned simultaneousCallsCount = EstimateIslandProcessingSimultaneousCallsMaximumCountForStepper(activeThreadCount,
+            islandsAllowedThreadCount, dMAX(smallCallsMaximum, largeCallsMaximum));
+        if (!world->PreallocateResourcesForThreadedCalls(simultaneousCallsCount)) {
+            break;
         }
-        dxBody *const *islandBodies = islandsInfo.GetBodiesArray();
-        for (sizeint i = 0; i != bodyCount; ++i) islandBodies[i]->tag = 0;
-        dxJoint *const *islandJoints = islandsInfo.GetJointsArray();
-        for (sizeint i = 0; i != jointCount; ++i) islandJoints[i]->tag = 0;
+
+        const sizeint chunksCount = islandsInfo.GetChunksCount();
+        const unsigned jobsCount = (unsigned)dMAX((sizeint)1, dMIN((sizeint)islandsAllowedThreadCount, chunksCount));
+
+        dCallReleaseeID groupReleasee;
+        world->PostThreadedCall(&summaryFault, &groupReleasee, jobsCount, NULL, pcwGroupCallWait,
+            &dxIslandsProcessingCallContext::ThreadedProcessGroup_Callback, (void *)&callContext, 0, "World Hybrid Islands Stepping Group");
+
+        callContext.AssignGroupReleasee(groupReleasee);
+        callContext.SetAllowedThreadCounts(stepperAllowedThreadCount, lcpAllowedThreadCount);
+
+        world->PostThreadedCallsGroup(NULL, jobsCount, groupReleasee,
+            &dxHybridIslandsProcessingCallContext::ThreadedProcessJobStart_Callback, (void *)&callContext, "World Hybrid Islands Stepping Start");
+
+        world->WaitThreadedCallExclusively(NULL, pcwGroupCallWait, NULL, "World Hybrid Islands Stepping Wait");
+
+        if (summaryFault != 0) {
+            break;
+        }
+
+        result = true;
     }
+    while (false);
+
+    UntagIslands(islandsInfo);
+    CallIslandsMovedCallbacks(islandsInfo);
 
     return result;
 }
@@ -1029,6 +1227,127 @@ sizeint dxIslandsProcessingCallContext::ObtainNextIslandToBeProcessed(sizeint is
 }
 
 
+// retruxx: dWorldHybridStep's jobs
+
+int dxHybridIslandsProcessingCallContext::ThreadedProcessJobStart_Callback(void *callContext, dcallindex_t callInstanceIndex, dCallReleaseeID callThisReleasee)
+{
+    (void)callInstanceIndex; // unused
+    (void)callThisReleasee; // unused
+    static_cast<dxHybridIslandsProcessingCallContext *>(callContext)->ThreadedProcessJobStart();
+    return true;
+}
+
+void dxHybridIslandsProcessingCallContext::ThreadedProcessJobStart()
+{
+    dxWorldProcessContext *context = m_world->unsafeGetWorldProcessingContext();
+
+    dxWorldProcessMemArena *stepperArena = context->ObtainStepperMemArena();
+    dIASSERT(stepperArena != NULL && stepperArena->IsStructureValid());
+
+    const dxWorldProcessIslandsInfo &islandsInfo = m_islandsInfo;
+    dxBody *const *islandBodiesStart = islandsInfo.GetBodiesArray();
+    dxJoint *const *islandJointsStart = islandsInfo.GetJointsArray();
+
+    dxSingleIslandCallContext *stepperCallContext = (dxSingleIslandCallContext *)stepperArena->AllocateBlock(sizeof(dxSingleIslandCallContext));
+    void *arenaState = stepperArena->SaveState();
+    // The island index and the chunk's end are both 0, so the first search claims a chunk
+    new(stepperCallContext) dxSingleIslandCallContext(this, stepperArena, arenaState, islandBodiesStart, islandJointsStart);
+
+    m_world->PostThreadedCallForUnawareReleasee(NULL, NULL, 0, m_groupReleasee, NULL,
+        &dxHybridIslandsProcessingCallContext::ThreadedProcessIslandSearch_Callback, (void *)stepperCallContext, 0, "World Hybrid Islands Stepping Selection");
+}
+
+int dxHybridIslandsProcessingCallContext::ThreadedProcessIslandSearch_Callback(void *callContext, dcallindex_t callInstanceIndex, dCallReleaseeID callThisReleasee)
+{
+    (void)callInstanceIndex; // unused
+    (void)callThisReleasee; // unused
+    dxSingleIslandCallContext *stepperCallContext = static_cast<dxSingleIslandCallContext *>(callContext);
+    static_cast<dxHybridIslandsProcessingCallContext *>(stepperCallContext->m_islandsProcessingContext)->ThreadedProcessIslandSearch(stepperCallContext);
+    return true;
+}
+
+void dxHybridIslandsProcessingCallContext::ThreadedProcessIslandSearch(dxSingleIslandCallContext *stepperCallContext)
+{
+    const dxWorldProcessIslandsInfo &islandsInfo = m_islandsInfo;
+    unsigned int const *islandSizes = islandsInfo.GetIslandSizes();
+
+    sizeint islandIndex = stepperCallContext->m_islandIndex;
+    dxBody *const *islandBodiesStart;
+    dxJoint *const *islandJointsStart;
+
+    if (islandIndex != stepperCallContext->m_chunkEnd) {
+        // The next island of the chunk follows the one just stepped
+        islandBodiesStart = stepperCallContext->GetSelectedIslandBodiesEnd();
+        islandJointsStart = stepperCallContext->GetSelectedIslandJointsEnd();
+    }
+    else {
+        const sizeint chunksCount = islandsInfo.GetChunksCount();
+        sizeint chunkIndex = ThrsafeIncrementSizeUpToLimit(&m_chunkToProcessStorage, chunksCount);
+        if (chunkIndex == chunksCount) {
+            FinalizeJob(stepperCallContext);
+            return;
+        }
+
+        const dxIslandsChunk &chunk = islandsInfo.GetChunksArray()[chunkIndex];
+        islandIndex = chunk.m_firstIsland;
+        stepperCallContext->m_chunkEnd = chunk.m_endIsland;
+        islandBodiesStart = islandsInfo.GetBodiesArray() + chunk.m_bodiesOffset;
+        islandJointsStart = islandsInfo.GetJointsArray() + chunk.m_jointsOffset;
+    }
+
+    unsigned int bcount = islandSizes[islandIndex * dxISE__MAX + dxISE_BODIES_COUNT];
+    unsigned int jcount = islandSizes[islandIndex * dxISE__MAX + dxISE_JOINTS_COUNT];
+    stepperCallContext->AssignIslandSelection(islandBodiesStart, islandJointsStart, bcount, jcount);
+    stepperCallContext->AssignIslandSearchProgress(islandIndex + 1);
+
+    stepperCallContext->RestoreSavedMemArenaStateForStepper();
+
+    dCallReleaseeID nextSearchReleasee;
+
+    // Summary fault flag may be omitted as any failures will automatically propagate to dependent releasee (i.e. to m_groupReleasee)
+    m_world->PostThreadedCallForUnawareReleasee(NULL, &nextSearchReleasee, 1, m_groupReleasee, NULL,
+        &dxHybridIslandsProcessingCallContext::ThreadedProcessIslandSearch_Callback, (void *)stepperCallContext, 0, "World Hybrid Islands Stepping Selection");
+
+    stepperCallContext->AssignStepperCallFinalReleasee(nextSearchReleasee);
+
+    m_world->PostThreadedCall(NULL, NULL, 0, nextSearchReleasee, NULL,
+        &dxHybridIslandsProcessingCallContext::ThreadedProcessIslandStepper_Callback, (void *)stepperCallContext, 0, "Hybrid Island Stepping Job Start");
+}
+
+int dxHybridIslandsProcessingCallContext::ThreadedProcessIslandStepper_Callback(void *callContext, dcallindex_t callInstanceIndex, dCallReleaseeID callThisReleasee)
+{
+    (void)callInstanceIndex; // unused
+    (void)callThisReleasee; // unused
+    dxSingleIslandCallContext *stepperCallContext = static_cast<dxSingleIslandCallContext *>(callContext);
+    static_cast<dxHybridIslandsProcessingCallContext *>(stepperCallContext->m_islandsProcessingContext)->ThreadedProcessIslandStepper(stepperCallContext);
+    return true;
+}
+
+void dxHybridIslandsProcessingCallContext::ThreadedProcessIslandStepper(dxSingleIslandCallContext *stepperCallContext)
+{
+    dxStepperProcessingCallContext &islandContext = stepperCallContext->m_stepperCallContext;
+    if (islandContext.m_islandBodiesCount >= m_steppers.m_largeMinBodies) {
+        islandContext.m_stepperAllowedThreads = m_stepperAllowedThreads;
+        islandContext.m_lcpAllowedThreads = m_lcpAllowedThreads;
+        m_steppers.m_largeStepper(&islandContext);
+    }
+    else {
+        islandContext.m_stepperAllowedThreads = 1;
+        islandContext.m_lcpAllowedThreads = 1;
+        m_steppers.m_smallStepper(&islandContext);
+    }
+}
+
+void dxHybridIslandsProcessingCallContext::FinalizeJob(dxSingleIslandCallContext *stepperCallContext)
+{
+    dxWorldProcessMemArena *stepperArena = stepperCallContext->m_stepperArena;
+    stepperCallContext->dxSingleIslandCallContext::~dxSingleIslandCallContext();
+
+    dxWorldProcessContext *context = m_world->unsafeGetWorldProcessingContext();
+    context->ReturnStepperMemArena(stepperArena);
+}
+
+
 //****************************************************************************
 // World processing context management
 
@@ -1117,8 +1436,29 @@ sizeint dxWorldProcessMemArena::AdjustArenaSizeForReserveRequirements(sizeint ar
 }
 
 
-bool dxReallocateWorldProcessContext (dxWorld *world, dxWorldProcessIslandsInfo &islandsInfo, 
+static bool ReallocateWorldProcessContext (dxWorld *world, dxWorldProcessIslandsInfo &islandsInfo,
+    dReal stepSize, dmemestimate_fn_t stepperEstimate, dmemestimate_fn_t largeEstimate, unsigned largeMinBodies,
+    const dxHybridSteppers *hybrid);
+
+bool dxReallocateWorldProcessContext (dxWorld *world, dxWorldProcessIslandsInfo &islandsInfo,
     dReal stepSize, dmemestimate_fn_t stepperEstimate)
+{
+    return ReallocateWorldProcessContext(world, islandsInfo, stepSize, stepperEstimate, stepperEstimate, UINT_MAX, NULL);
+}
+
+// retruxx
+bool dxReallocateWorldProcessContextHybrid (dxWorld *world, dxWorldProcessIslandsInfo &islandsInfo,
+    dReal stepSize, const dxHybridSteppers &steppers)
+{
+    return ReallocateWorldProcessContext(world, islandsInfo, stepSize, steppers.m_smallMemEstimate,
+        steppers.m_largeMemEstimate, steppers.m_largeMinBodies, &steppers);
+}
+
+// retruxx: dxReallocateWorldProcessContext, with an island of at least largeMinBodies bodies estimated with
+// largeEstimate, and with dWorldHybridStep's chunks built when hybrid is given
+static bool ReallocateWorldProcessContext (dxWorld *world, dxWorldProcessIslandsInfo &islandsInfo,
+    dReal stepSize, dmemestimate_fn_t stepperEstimate, dmemestimate_fn_t largeEstimate, unsigned largeMinBodies,
+    const dxHybridSteppers *hybrid)
 {
     bool result = false;
 
@@ -1144,7 +1484,7 @@ bool dxReallocateWorldProcessContext (dxWorld *world, dxWorldProcessIslandsInfo 
         const dxWorldProcessMemoryReserveInfo *reserveInfo = wmem->SureGetMemoryReserveInfo();
         const dxWorldProcessMemoryManager *memmgr = wmem->SureGetMemoryManager();
 
-        sizeint islandsReq = EstimateIslandProcessingMemoryRequirements(world);
+        sizeint islandsReq = EstimateIslandProcessingMemoryRequirements(world, hybrid != NULL);
         dIASSERT(islandsReq == dEFFICIENT_SIZE(islandsReq));
 
         dxWorldProcessMemArena *islandsArena = context->ReallocateIslandsMemArena(islandsReq, memmgr, 1.0f, reserveInfo->m_uiReserveMinimum);
@@ -1154,8 +1494,14 @@ bool dxReallocateWorldProcessContext (dxWorld *world, dxWorldProcessIslandsInfo 
         }
         dIASSERT(islandsArena->IsStructureValid());
 
-        sizeint stepperReq = BuildIslandsAndEstimateStepperMemoryRequirements(islandsInfo, islandsArena, world, stepSize, stepperEstimate);
+        sizeint stepperReq = BuildIslandsAndEstimateStepperMemoryRequirements(islandsInfo, islandsArena, world, stepSize, stepperEstimate,
+            largeEstimate, largeMinBodies);
         dIASSERT(stepperReq == dEFFICIENT_SIZE(stepperReq));
+
+        if (hybrid != NULL)
+        {
+            BuildIslandsChunks(islandsInfo, islandsArena, hybrid->m_largeMinBodies, hybrid->m_chunkMinBodies);
+        }
 
         sizeint stepperReqWithCallContext = stepperReq + dEFFICIENT_SIZE(sizeof(dxSingleIslandCallContext));
 

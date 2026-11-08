@@ -95,6 +95,8 @@ dxWorld::dxWorld():
     islands_max_threads(dWORLDSTEP_THREADCOUNT_UNLIMITED),
     stepping_max_threads(dWORLDSTEP_THREADCOUNT_UNLIMITED),
     solving_max_threads(1),
+    hybrid_quickstep_min_bodies(30), // retruxx
+    islands_chunk_min_bodies(16), // retruxx
     wmem(NULL),
     qs(NULL),
     contactp(NULL),

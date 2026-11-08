@@ -256,6 +256,15 @@ private:
     dCallWaitID             m_pcwIslandsSteppingWait;
 };
 
+// retruxx: a run of consecutive islands that dWorldHybridStep gives to one thread, which steps them one after another
+struct dxIslandsChunk
+{
+    sizeint m_firstIsland;   // index of the chunk's first island
+    sizeint m_endIsland;     // one past its last island
+    sizeint m_bodiesOffset;  // where the first island's bodies start in the islands' body array
+    sizeint m_jointsOffset;  // and its joints in the joint array
+};
+
 struct dxWorldProcessIslandsInfo
 {
     void AssignInfo(sizeint islandcount, unsigned int const *islandsizes, dxBody *const *bodies, dxJoint *const *joints)
@@ -264,18 +273,31 @@ struct dxWorldProcessIslandsInfo
         m_pIslandSizes = islandsizes;
         m_pBodies = bodies;
         m_pJoints = joints;
+        m_ChunkCount = 0;
+        m_pChunks = NULL;
+    }
+
+    // retruxx
+    void AssignChunks(sizeint chunkcount, dxIslandsChunk const *chunks)
+    {
+        m_ChunkCount = chunkcount;
+        m_pChunks = chunks;
     }
 
     sizeint GetIslandsCount() const { return m_IslandCount; }
     unsigned int const *GetIslandSizes() const { return m_pIslandSizes; }
     dxBody *const *GetBodiesArray() const { return m_pBodies; }
     dxJoint *const *GetJointsArray() const { return m_pJoints; }
+    sizeint GetChunksCount() const { return m_ChunkCount; } // retruxx
+    dxIslandsChunk const *GetChunksArray() const { return m_pChunks; } // retruxx
 
 private:
     sizeint                  m_IslandCount;
     unsigned int const      *m_pIslandSizes;
     dxBody *const           *m_pBodies;
     dxJoint *const          *m_pJoints;
+    sizeint                  m_ChunkCount; // retruxx
+    dxIslandsChunk const    *m_pChunks; // retruxx
 };
 
 struct dxStepperProcessingCallContext
@@ -331,8 +353,31 @@ bool dxProcessIslands (dxWorld *world, const dxWorldProcessIslandsInfo &islandsI
 typedef sizeint (*dmemestimate_fn_t) (dxBody * const *body, unsigned int nb, 
                                      dxJoint * const *_joint, unsigned int _nj);
 
-bool dxReallocateWorldProcessContext (dxWorld *world, dxWorldProcessIslandsInfo &islandsinfo, 
+bool dxReallocateWorldProcessContext (dxWorld *world, dxWorldProcessIslandsInfo &islandsinfo,
                                       dReal stepsize, dmemestimate_fn_t stepperestimate);
+
+// retruxx: dWorldHybridStep's two steppers. An island of at least m_largeMinBodies bodies takes the large
+// stepper with the world's stepping and LCP thread limits, a smaller one the small stepper on one thread.
+struct dxHybridSteppers
+{
+    dstepper_fn_t               m_smallStepper;
+    dmemestimate_fn_t           m_smallMemEstimate;
+    dmaxcallcountestimate_fn_t  m_smallMaxCallCount;
+    dstepper_fn_t               m_largeStepper;
+    dmemestimate_fn_t           m_largeMemEstimate;
+    dmaxcallcountestimate_fn_t  m_largeMaxCallCount;
+    unsigned                    m_largeMinBodies;
+    unsigned                    m_chunkMinBodies;
+};
+
+// retruxx: builds the islands as dxReallocateWorldProcessContext does, with each island's memory estimated for
+// its stepper, and groups them into chunks
+bool dxReallocateWorldProcessContextHybrid (dxWorld *world, dxWorldProcessIslandsInfo &islandsinfo,
+                                            dReal stepsize, const dxHybridSteppers &steppers);
+
+// retruxx: steps the islands chunk by chunk, each with its stepper
+bool dxProcessIslandsHybrid (dxWorld *world, const dxWorldProcessIslandsInfo &islandsInfo,
+                             dReal stepSize, const dxHybridSteppers &steppers);
 
 dxWorldProcessMemArena *dxAllocateTemporaryWorldProcessMemArena(
     sizeint memreq, const dxWorldProcessMemoryManager *memmgr/*=NULL*/, const dxWorldProcessMemoryReserveInfo *reserveinfo/*=NULL*/);
